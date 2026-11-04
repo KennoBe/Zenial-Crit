@@ -1,0 +1,28 @@
+## Interface: 16001
+## Title: Zenial Crit
+## Notes: Critical-hit effects for ZENIAL
+## Notes-deDE: Kritische-Treffer-Effekte für ZENIAL
+## Author: ZENIAL
+## Version: 1.9.0
+## IconTexture: Interface\AddOns\ZenialCrit\Media\Icon.tga
+## SavedVariables: ZenialCritDB, ZenialCritHistoryDB, ZenialComixDB, ZenialCritSetupDB
+## X-License: MIT
+
+Sounds.lua
+Logic.lua
+History.lua
+Locale.lua
+Theme.lua
+Adapter.lua
+Effects.lua
+UIKit.lua
+UISounds.lua
+UIEffects.lua
+UIAppearance.lua
+UIHistory.lua
+UI2.lua
+ConfigWizard.lua
+Setup.lua
+Core.lua
+Launcher.lua
+LauncherSpec.lua
