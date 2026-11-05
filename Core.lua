@@ -177,6 +177,11 @@ end
 
 function app:HandleCombat(unit, action, modifier, amount, school)
     if api:TargetCrit(unit, action, modifier, amount, school) then
+        if not api:Public(amount) or not api:Public(school) then
+            -- Generic output needs only the public crit flag. Never compare,
+            -- record or format protected numeric payloads, including chat text.
+            return self:Trigger("crit", false, NS.Logic.SoundCategory(self.db, "unknown", "crit"))
+        end
         return self:HandleObserved("crit", unit, amount, school)
     end
     if api:ObservedHeal(unit, action, modifier, amount, school) then

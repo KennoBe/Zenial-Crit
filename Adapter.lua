@@ -413,12 +413,15 @@ function Adapter.New(env)
     end
 
     function A:TargetCrit(unit, action, modifier, amount, school)
-        if not self:Public(unit) or not self:Public(action) or not self:Public(modifier)
-            or not self:Public(amount) or not self:Public(school) then return false end
+        if not self:Public(unit) or not self:Public(action) or not self:Public(modifier) then return false end
+        -- A public CRITICAL flag remains usable when the client hides the amount.
+        -- Public malformed values still fail the existing numeric validation.
+        local validAmount = not self:Public(amount) or
+            type(amount) == "number" and amount == amount and amount ~= math.huge and amount ~= -math.huge and amount > 0
+        local validSchool = not self:Public(school) or
+            type(school) == "number" and school == school and school ~= math.huge and school ~= -math.huge and school >= 0
         return unit == "target" and action == "WOUND" and modifier == "CRITICAL"
-            and type(amount) == "number" and amount == amount and amount ~= math.huge and amount ~= -math.huge
-            and amount > 0 and type(school) == "number" and school == school
-            and school ~= math.huge and school ~= -math.huge and school >= 0
+            and validAmount and validSchool
     end
 
     function A:ObservedHeal(unit, action, modifier, amount, school)
