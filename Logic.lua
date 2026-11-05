@@ -35,8 +35,14 @@ local defaults = {
     customSounds = {}, customSoundNextID = 1,
     critFont = "standard", killFont = "standard",
     critColor = {.98, .8, .12}, killColor = {1, .36, .06},
-    critTexts = {"BAM!", "POW!", "CRIT!"},
-    killTexts = {"KILL!"},
+    critTexts = {
+        "CRIT HAPPENS!", "IN YOUR FACE!", "THAT'S GOTTA HURT!", "GET BONKED!", "BOOM!",
+        "RIGHT IN THE FACE!", "CRITICAL DAMAGE!", "SMACKDOWN!", "TAKE THAT!", "FULL FORCE!",
+    },
+    killTexts = {
+        "BACK TO ORGRIMMAR!", "GO TAKE A SHOWER!", "NIGHT NIGHT!", "SKILL ISSUE!", "BACK TO THE GRAVEYARD!",
+        "GG, GET REKT!", "RESPAWN SIMULATOR!", "NO MORE LAG FOR YOU!", "LOOT PINATA!", "SIT DOWN!",
+    },
     scale = 1, nameplateScale = 1, intensity = 2, soundCooldown = .25, x = 0, y = 160,
     separatePositions = false, critX = 0, critY = 160, killX = 0, killY = 160,
     displayMode = "nameplate",
