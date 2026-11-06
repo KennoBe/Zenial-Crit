@@ -5,7 +5,7 @@
 ## Author: ZENIAL
 ## Version: 1.9.0
 ## IconTexture: Interface\AddOns\ZenialCrit\Media\Icon.tga
-## SavedVariables: ZenialCritDB, ZenialCritHistoryDB, ZenialComixDB, ZenialCritSetupDB
+## SavedVariables: ZenialCritDB, ZenialCritHistoryDB, ZenialComixDB, ZenialCritSetupDB, ZenialMinimapDB
 ## X-License: MIT
 
 Sounds.lua
