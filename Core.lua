@@ -270,7 +270,7 @@ _G.ZenialAddonPanels = _G.ZenialAddonPanels or {}
 _G.ZenialAddonPanels.ZenialCrit = {
     apiVersion = 1,
     Diagnostics = function()
-        return {version = "1.9.0", initialized = app.initialized,
+        return {version = "1.9.1", initialized = app.initialized,
             killRegistered = app.killRegistered, critRegistered = app.critRegistered,
             displayMode = app.db and app.db.displayMode,
             critGraphics = app.db and app.db.critGraphics, killGraphics = app.db and app.db.killGraphics,
