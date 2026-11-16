@@ -9,6 +9,7 @@ if not frame then return end
 app.frame = frame
 
 local VERSION = "1.9.1"
+app.version = VERSION
 
 -- Config used before login (damage font): root.last, else "Standard", else a flat legacy table.
 local function savedConfig()
@@ -407,7 +408,8 @@ function app:Init()
                 if ok then self.ui = result end
             end
             if self.ui then
-                if command == "settings" then self.ui:SetPage("settings"); self.ui:Refresh(); self.ui.frame:Show()
+                -- /zcrit toggles the window on the page shown last; /zcrit settings opens the overview.
+                if command == "settings" then self.ui:SetPage("overview"); self.ui.frame:Show()
                 else self.ui:Toggle() end
             end
         end

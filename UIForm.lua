@@ -14,7 +14,7 @@ local SLIDER_W, SLIDER_H, VALUE_W = 200, 16, 52
 local SEGMENT_W, SEGMENT_H = 300, 26
 local SWATCH_W, SWATCH_H = 40, 22
 local INPUT_W, INPUT_H = 260, 24
-local TEXTS_H = 120
+local TEXTS_MIN, TEXTS_PAD = 60, 8   -- multi-line fields size themselves by their content
 local BUTTON_H, BUTTON_GAP, BUTTON_MIN = 26, 8, 120
 local POPUP_ROW, POPUP_MAX = 22, 10
 
@@ -205,6 +205,8 @@ function Form:Slider(spec)
     slider:SetSize(SLIDER_W, SLIDER_H)
     slider:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -(VALUE_W + 8), -9)
     slider:SetOrientation("HORIZONTAL")
+    -- Without a template a slider is not mouse-active; the wheel belongs to the scrolling page.
+    slider:EnableMouse(true)
     slider:EnableMouseWheel(false)
     local track = slider:CreateTexture(nil, "BACKGROUND")
     track:SetPoint("LEFT", slider, "LEFT", 0, 0); track:SetPoint("RIGHT", slider, "RIGHT", 0, 0); track:SetHeight(4)
@@ -533,11 +535,22 @@ end
 function Form:Texts(spec)
     local row = addRow(self, "Texts", spec)
     addLabels(self, row, 0, self.inner)
-    local edit = newEdit(row, true, self.inner, TEXTS_H)
+    local edit = newEdit(row, true, self.inner, TEXTS_MIN)
     if spec.maxChars and edit.SetMaxLetters then edit:SetMaxLetters(spec.maxChars * (spec.maxLines or 1) + (spec.maxLines or 1)) end
     row.control = edit
     local function offset() return row.hasDesc and 52 or 30 end
+    local function fieldHeight()
+        local height = edit.GetHeight and edit:GetHeight()
+        return math.max(TEXTS_MIN, type(height) == "number" and height or 0)
+    end
     row.layoutEdit = function() edit:ClearAllPoints(); edit:SetPoint("TOPLEFT", row.frame, "TOPLEFT", 0, -offset()) end
+    -- The client changes the field height while the user types: stack the page again, never touching the text.
+    local function reflow()
+        if self.refreshing then return end
+        if row.fieldHeight ~= fieldHeight() and row.frame:IsShown() then self:Refresh() end
+    end
+    edit:HookScript("OnSizeChanged", reflow)
+    edit:HookScript("OnTextChanged", function(_, userInput) if userInput then reflow() end end)
     edit:SetScript("OnEditFocusLost", function(box)
         if self.refreshing then return end
         local text = box:GetText()
@@ -558,7 +571,10 @@ function Form:Texts(spec)
         local value = self:Read(row)
         edit:SetText(type(value) == "table" and table.concat(value, "\n") or tostring(value or ""))
     end
-    row.height = function() return offset() + TEXTS_H + 4 end
+    row.height = function()
+        row.fieldHeight = fieldHeight()
+        return offset() + row.fieldHeight + TEXTS_PAD
+    end
     return row
 end
 

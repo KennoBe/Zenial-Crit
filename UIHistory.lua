@@ -6,15 +6,23 @@ local History = {}
 NS.UIHistory = History
 
 function History.Build(ctx)
-    local app, api, view, frame, pageWidth, headerHeight = ctx.app, ctx.api, ctx.view, ctx.frame, ctx.pageWidth, ctx.headerHeight
+    local app, api, view, pageWidth = ctx.app, ctx.api, ctx.view, ctx.pageWidth
     local kit = ctx.kit
     local label, button, divider, closePopups, styleScroll = kit.label, kit.button, kit.divider, kit.closePopups, kit.styleScroll
     local checkbox, editBox, dropdown, slider = kit.checkbox, kit.editBox, kit.dropdown, kit.slider
 
-    -- History page.
-    local historyPage = api:Frame("Frame", nil, frame, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    historyPage:SetPoint("TOPLEFT", 12, -headerHeight); historyPage:SetPoint("BOTTOMRIGHT", -12, 12)
-    if T then T.Panel(historyPage, "inset") end; view.historyPage = historyPage
+    -- History page: a segment for the kind on top, the list below.
+    local host = ctx.historyHost
+    local segmentHost = api:Frame("Frame", nil, host)
+    segmentHost:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
+    local historyForm = NS.UIForm.New({app = app, api = api, tr = tr}, segmentHost, 640)
+    historyForm:Card()
+    historyForm:Segment({full = true, options = {{"crit", "Crits"}, {"heal", "Heal crits"}},
+        get = function() return view.historyKind end, set = function(value) view.historyKind = value end})
+    view.historyForm = historyForm
+    local historyPage = api:Frame("Frame", nil, host, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    historyPage:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -76); historyPage:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", -18, 0)
+    if T then T.Panel(historyPage, "surface") end; view.historyPage = historyPage
     view.historyWarning = label(historyPage, "Observed target crits can also come from other players. The Forever client does not provide the attacker or skill.",
         16, -11, pageWidth - 190, "GameFontHighlightSmall", "muted"); view.historyWarning:SetHeight(38)
     view.historyRecording = button(historyPage, "", pageWidth - 154, -9, 138, function() app:SetHistoryEnabled(not app.history.enabled) end)
@@ -27,7 +35,10 @@ function History.Build(ctx)
     view.historyBestMeta = label(recordCard, "", 190, -25, pageWidth - 230, "GameFontHighlight", "text"); view.historyBestMeta:SetHeight(30)
     view.topHistoryTab = button(historyPage, "Top 100", 16, -124, 132, function() view.historyList="top"; view:RefreshHistory() end)
     view.recentHistoryTab = button(historyPage, "Latest 100", 156, -124, 132, function() view.historyList="recent"; view:RefreshHistory() end)
-    view.clearHistory = button(historyPage, "Clear history", pageWidth - 154, -124, 138, function() view.historyConfirm:Show() end, "danger")
+    view.clearHistory = button(historyPage, "Clear history", pageWidth - 154, -124, 138, function()
+        view:Confirm({title = "Delete history?", text = "Only the crit/heal history and comparison records of the current character will be deleted.",
+            confirm = "Delete", onConfirm = function() app:ClearHistory() end})
+    end, "danger")
     if T then T.StyleTab(view.topHistoryTab); T.StyleTab(view.recentHistoryTab) end
     local historyScroll = api:Frame("ScrollFrame", nil, historyPage)
     historyScroll:SetPoint("TOPLEFT", 16, -160); historyScroll:SetPoint("BOTTOMRIGHT", -28, 16)
@@ -35,14 +46,6 @@ function History.Build(ctx)
     styleScroll(historyScroll, 48)
     view.historyScroll, view.historyContent = historyScroll, historyContent
     view.historyEmpty = label(historyContent, "", 12, -16, pageWidth - 88, "GameFontHighlight", "muted"); view.historyEmpty:SetHeight(52)
-    local confirm = api:Frame("Frame", nil, historyPage, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    confirm:SetSize(360, 126); confirm:SetPoint("CENTER"); confirm:SetFrameStrata("TOOLTIP")
-    if T then T.Panel(confirm, "parchment") end
-    local ct = label(confirm, "Delete history?", 18, -15, 324, "GameFontNormalLarge", "gold"); ct:SetJustifyH("CENTER")
-    local cx = label(confirm, "Only the crit/heal history and comparison records of the current character will be deleted.", 18, -43, 324, "GameFontHighlightSmall", "muted")
-    cx:SetJustifyH("CENTER"); cx:SetHeight(34)
-    view.historyConfirmButton = button(confirm, "Delete", 47, -84, 126, function() app:ClearHistory(); confirm:Hide() end, "danger")
-    view.historyCancelButton = button(confirm, "Cancel", 187, -84, 126, function() confirm:Hide() end); confirm:Hide(); view.historyConfirm=confirm
 
     local function formatAmount(value)
         local result=tostring(math.floor(value or 0)); local separator=I.isGerman and "." or ","
@@ -90,6 +93,7 @@ function History.Build(ctx)
 
     function view:RefreshHistory()
         if not app.history then return end
+        self.historyForm:Refresh()
         local kind=self.historyKind=="heal" and "heal" or "crit"
         local key=app:EnsureCharacter()
         local values=key and NS.History.Get(app.history,key,self.historyList,kind) or {}

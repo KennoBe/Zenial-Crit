@@ -86,11 +86,11 @@ function Sounds.BuildPage(ctx)
     label(sounds, "Category", 16, -42, 120, "GameFontHighlightSmall", "muted")
     categoryLabels = {
         crit="Crit", heal="Heal", kill="Kill", record="Record", healRecord="Heal record",
-        low="Weak crit", healLow="Weak heal",
+        low="Weak crit", healLow="Weak heal", streak="Kill streak", proc="Proc",
     }
     local categoryOptions = {
         {"crit","Crit"},{"heal","Heal"},{"kill","Kill"},{"record","Record"},
-        {"healRecord","Heal record"},{"low","Weak crit"},{"healLow","Weak heal"},
+        {"healRecord","Heal record"},{"low","Weak crit"},{"healLow","Weak heal"},{"streak","Kill streak"},{"proc","Proc"},
     }
     view.soundCategoryDropdown = dropdown(sounds, 16, -62, 250, categoryOptions,
         function() return view.soundCategory end, function(value) view.soundCategory = value end)
@@ -98,7 +98,7 @@ function Sounds.BuildPage(ctx)
     local soundChannelKeys = {
         crit="critSoundChannel",heal="healSoundChannel",kill="killSoundChannel",
         record="recordSoundChannel",healRecord="healRecordSoundChannel",
-        low="lowSoundChannel",healLow="healLowSoundChannel",
+        low="lowSoundChannel",healLow="healLowSoundChannel",streak="streakSoundChannel",proc="procSoundChannel",
     }
     view.soundChannelDropdown = dropdown(sounds, 280, -62, 150,
         {{"Master","Master"},{"Dialog","Dialog"},{"SFX","SFX"}},
@@ -161,18 +161,6 @@ function Sounds.BuildPage(ctx)
     slider(sounds, "soundCooldown", "Sound pause", 16, -650, 300, 0, 30, .25, "%.2f s")
     view.soundStatus = label(sounds, "", 330, -648, 312, "GameFontHighlightSmall", "muted"); view.soundStatus:SetHeight(44)
 
-    local removeConfirm = api:Frame("Frame", nil, frame, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    removeConfirm:SetSize(410, 145); removeConfirm:SetPoint("CENTER"); removeConfirm:SetFrameStrata("TOOLTIP")
-    if T then T.Panel(removeConfirm, "parchment") end
-    label(removeConfirm, "Remove own sound?", 18, -15, 374, "GameFontNormalLarge", "gold"):SetJustifyH("CENTER")
-    view.removeText = label(removeConfirm, "", 18, -43, 374, "GameFontHighlightSmall", "muted")
-    view.removeText:SetJustifyH("CENTER"); view.removeText:SetHeight(50)
-    button(removeConfirm, "Remove entry", 58, -105, 136, function()
-        if view.removeSoundID then app:RemoveCustomSound(view.removeSoundID) end
-        view.removeSoundID = nil; removeConfirm:Hide(); view:RefreshSounds()
-    end, "danger")
-    button(removeConfirm, "Cancel", 212, -105, 136, function() removeConfirm:Hide() end)
-    removeConfirm:Hide(); view.removeConfirm = removeConfirm
     ctx.categoryLabels, ctx.catalogContent = categoryLabels, catalogContent
 end
 
@@ -203,7 +191,8 @@ function Sounds.DefineMethods(ctx)
         local item = NS.Sounds.CustomByID(app.db, id); if not item then return end
         local used = NS.Sounds.UsedBy(app.db, id)
         local suffix = #used > 0 and ("\n" .. tr("Used by") .. ": " .. categoryNames(used) .. ". " .. tr("These selections become incomplete.")) or ""
-        self.removeText:SetText(item.name .. suffix); self.removeSoundID = id; self.removeConfirm:Show()
+        self:Confirm({title = "Remove own sound?", text = function() return "%s", item.name .. suffix end, confirm = "Remove entry",
+            onConfirm = function() app:RemoveCustomSound(id); view:RefreshSounds() end})
     end
 
     local function isSelected(id)

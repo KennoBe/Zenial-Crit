@@ -116,16 +116,24 @@ function Kit.New(ctx)
         refresh()
     end
 
+    -- The caption is part of the click target: clicking it toggles the box like the box itself.
     local function checkbox(parentFrame, key, title, x, y, onToggle, labelWidth)
         local c = api:Frame("CheckButton", nil, parentFrame, "UICheckButtonTemplate")
         c:SetSize(24, 24); c:SetPoint("TOPLEFT", x, y)
         if T then T.StyleCheckbox(c) end
         local text = label(parentFrame, title, x + 28, y - 3, labelWidth or 220, "GameFontHighlight", "text")
-        c:SetScript("OnClick", function(self)
-            local enabled = self:GetChecked() == true
+        local function apply(enabled)
             if onToggle then onToggle(enabled) else app.db[key] = enabled end
             app:Changed()
+        end
+        c:SetScript("OnClick", function(self) apply(self:GetChecked() == true) end)
+        local hit = api:Frame("Button", nil, parentFrame)
+        hit:SetSize(labelWidth or 220, 24); hit:SetPoint("TOPLEFT", x + 28, y)
+        hit:SetScript("OnClick", function()
+            local enabled = not (c:GetChecked() == true)
+            c:SetChecked(enabled); apply(enabled)
         end)
+        c.zenialLabelHit = hit
         view.controls[#view.controls + 1] = function() c:SetChecked(app.db[key] == true) end
         return c, text
     end
@@ -140,34 +148,59 @@ function Kit.New(ctx)
         return e
     end
 
-    local function dropdown(parentFrame, x, y, width, options, getValue, setValue)
-        local main, popup, optionButtons
+    -- options: list of {id, text}, or a function returning it (read on every open and refresh).
+    -- placement "up" opens the list above the button (for controls at the bottom of a window).
+    local function dropdown(parentFrame, x, y, width, optionsSource, getValue, setValue, placement)
+        local main, popup
+        local optionButtons, options = {}, {}
+        local function loadOptions()
+            options = type(optionsSource) == "function" and optionsSource() or optionsSource or {}
+            return options
+        end
+        loadOptions()
+        local function markSelected()
+            local value = getValue()
+            for index, b in ipairs(optionButtons) do
+                if T then T.SetSelected(b, options[index] ~= nil and options[index][1] == value) end
+            end
+        end
         local function open()
             if popup and popup:IsShown() then popup:Hide(); return end
+            loadOptions()
             if not popup then
                 popup = api:Frame("Frame", nil, api:Root(), BackdropTemplateMixin and "BackdropTemplate" or nil)
-                popup:SetSize(width, #options * 26 + 10); popup:SetFrameStrata("TOOLTIP"); popup:SetClampedToScreen(true)
+                popup:SetFrameStrata("TOOLTIP"); popup:SetClampedToScreen(true)
                 if T then T.Panel(popup, "inset") end
-                optionButtons = {}
-                for i, option in ipairs(options) do
-                    local id = option[1]
-                    local b = button(popup, option[2], 5, -5 - (i - 1) * 26, width - 10, function()
-                        setValue(id); popup:Hide(); app:Changed()
-                    end)
-                    b:SetHeight(25); optionButtons[id] = b
-                end
                 popup:Hide(); view.popups[#view.popups + 1] = popup
             end
-            closePopups(popup); popup:ClearAllPoints(); popup:SetPoint("TOPLEFT", main, "BOTTOMLEFT", 0, -3); popup:Show()
+            popup:SetSize(width, #options * 26 + 10)
+            for i, option in ipairs(options) do
+                local b = optionButtons[i]
+                if not b then
+                    b = button(popup, "", 5, -5 - (i - 1) * 26, width - 10, function(self)
+                        local chosen = self.optionId
+                        setValue(chosen); popup:Hide(); app:Changed()
+                    end)
+                    b:SetHeight(25); optionButtons[i] = b
+                end
+                b.optionId = option[1]; b:SetText(tr(option[2])); b:Show()
+            end
+            for i = #options + 1, #optionButtons do optionButtons[i]:Hide() end
+            markSelected()
+            closePopups(popup); popup:ClearAllPoints()
+            if placement == "up" then popup:SetPoint("BOTTOMLEFT", main, "TOPLEFT", 0, 3)
+            else popup:SetPoint("TOPLEFT", main, "BOTTOMLEFT", 0, -3) end
+            popup:Show()
         end
         main = button(parentFrame, "", x, y, width, open)
         if T then T.StyleDropdown(main) end
         view.controls[#view.controls + 1] = function()
+            loadOptions()
             local value = getValue()
-            for _, option in ipairs(options) do if option[1] == value then main:SetText(tr(option[2])) end end
-            if optionButtons and T then
-                for id, b in pairs(optionButtons) do T.SetSelected(b, id == value) end
-            end
+            local text = ""
+            for _, option in ipairs(options) do if option[1] == value then text = tr(option[2]) end end
+            main:SetText(text)
+            if popup and popup:IsShown() then markSelected() end
         end
         return main
     end
