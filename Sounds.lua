@@ -52,6 +52,8 @@ local categoryKeys = {
     healRecord = { mode = "healRecordSoundMode", ids = "healRecordSoundIDs" },
     low = { mode = "lowSoundMode", ids = "lowSoundIDs" },
     healLow = { mode = "healLowSoundMode", ids = "healLowSoundIDs" },
+    streak = { mode = "streakSoundMode", ids = "streakSoundIDs" },
+    proc = { mode = "procSoundMode", ids = "procSoundIDs" },
 }
 S.CategoryKeys = categoryKeys
 

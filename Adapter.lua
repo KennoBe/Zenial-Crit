@@ -108,6 +108,31 @@ function Adapter.New(env)
         return result ~= false
     end
 
+    function A:Unregister(frame, event)
+        if not frame or type(frame.UnregisterEvent) ~= "function" then return false end
+        return (pcall(frame.UnregisterEvent, frame, event))
+    end
+
+    -- Instance type from IsInInstance (second result); nil unless readable.
+    function A:InstanceType()
+        if type(env.IsInInstance) ~= "function" then return nil end
+        local ok, _, instanceType = pcall(env.IsInInstance)
+        if ok and self:Public(instanceType) and type(instanceType) == "string" then return instanceType end
+    end
+
+    function A:IsPlayerGUID(guid)
+        return self:Public(guid) and type(guid) == "string" and guid:sub(1, 7) == "Player-" or false
+    end
+
+    function A:SpellName(id)
+        if not self:Public(id) or type(id) ~= "number" then return nil end
+        local spell = env.C_Spell
+        if type(spell) == "table" and type(spell.GetSpellName) == "function" then
+            return self:Text(spell.GetSpellName, 80, id)
+        end
+        return self:Text(env.GetSpellInfo, 80, id)
+    end
+
     -- Unit-filtered registration only when the client confirms it with true.
     -- Otherwise register globally; the handler still filters the unit token.
     function A:RegisterUnit(frame, event, ...)

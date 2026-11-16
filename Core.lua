@@ -6,27 +6,83 @@ local frame = api:Frame()
 if not frame then return end
 app.frame = frame
 
+local VERSION = "1.9.1"
+
+-- Config used before login (damage font): root.last, else "Standard", else a flat legacy table.
 local function savedConfig()
     local saved = ZenialCritDB
     if type(saved) ~= "table" then saved = ZenialComixDB end
+    if type(saved) == "table" and type(saved.profiles) == "table" then
+        local profile = type(saved.last) == "string" and saved.profiles[saved.last] or nil
+        return NS.Logic.Sanitize(profile or saved.profiles[NS.Profiles.DefaultName])
+    end
     return NS.Logic.Sanitize(saved)
 end
 
 api:ApplyDamageFont(savedConfig().critFont)
 
+-- ZenialCritDB is the profile root; app.db is the flat config of the active profile.
 function app:Changed()
     self.db = NS.Logic.Sanitize(self.db)
-    ZenialCritDB = self.db
+    if self.root then
+        self.root.profiles[self.profile] = self.db
+        ZenialCritDB = self.root
+    end
     api:ApplyDamageFont(self.db.critFont)
     api:TrackNameplates(self.db.displayMode == "nameplate")
     for _, view in ipairs(self.views) do view:Refresh() end
 end
 
+local textKinds = {killTexts = "kill", healTexts = "heal", streakTexts = "streak"}
 function app:TextsChanged(key, value, sourceView)
-    local kind = key == "killTexts" and "kill" or "crit"
-    self.db[key] = NS.Logic.SanitizeTexts(value, kind)
-    ZenialCritDB = self.db
+    self.db[key] = NS.Logic.SanitizeTexts(value, textKinds[key] or "crit")
+    if self.root then
+        self.root.profiles[self.profile] = self.db
+        ZenialCritDB = self.root
+    end
     for _, view in ipairs(self.views) do view:Refresh() end
+end
+
+function app:SetProfile(name)
+    if not self.root or type(name) ~= "string" or not self.root.profiles[name] then return false end
+    self.root.profiles[self.profile] = self.db
+    local key = self:EnsureCharacter()
+    if key then NS.Profiles.Assign(self.root, key, name) end
+    self.root.last = name
+    self.profile, self.db = name, self.root.profiles[name]
+    self:Changed()
+    return true
+end
+
+function app:CreateProfile(name)
+    if not self.root then return nil, "Profiles are not ready." end
+    self.root.profiles[self.profile] = self.db
+    local created, err = NS.Profiles.Create(self.root, name, self.profile)
+    if not created then return nil, err end
+    self:Changed()
+    return created
+end
+
+function app:DeleteProfile(name)
+    if not self.root then return nil, "Profiles are not ready." end
+    local ok, result = NS.Profiles.Delete(self.root, name)
+    if not ok then return nil, result end
+    if self.profile == name or not self.root.profiles[self.profile] then
+        self.profile, self.db = NS.Profiles.Resolve(self.root, self:EnsureCharacter())
+    end
+    self:Changed()
+    return true
+end
+
+function app:ApplyPreset(name)
+    if not NS.Logic.ApplyPreset(self.db, name) then return false end
+    self:Changed()
+    return true
+end
+
+function app:ResetKeys(keys)
+    NS.Logic.ResetKeys(self.db, keys)
+    self:Changed()
 end
 
 function app:EnsureCharacter()
@@ -209,13 +265,14 @@ function app:Init()
     local saved = ZenialCritDB
     if type(saved) ~= "table" then saved = ZenialComixDB end
     local fresh = type(saved) ~= "table" or next(saved) == nil
-    self.db = NS.Logic.Sanitize(saved)
-    ZenialCritDB = self.db
+    self.root = NS.Profiles.SanitizeRoot(saved)
+    ZenialCritDB = self.root
+    self:EnsureCharacter()
+    self.profile, self.db = NS.Profiles.Resolve(self.root, self.characterKey)
     api:ApplyDamageFont(self.db.critFont)
     ZenialComixDB = nil
     self.history = NS.History.Sanitize(ZenialCritHistoryDB)
     ZenialCritHistoryDB = self.history
-    self:EnsureCharacter()
     self.effects = NS.Effects.New(api)
     api:TrackNameplates(self.db.displayMode == "nameplate")
     self.killRegistered = api:Register(frame, "PARTY_KILL")
@@ -270,7 +327,7 @@ _G.ZenialAddonPanels = _G.ZenialAddonPanels or {}
 _G.ZenialAddonPanels.ZenialCrit = {
     apiVersion = 1,
     Diagnostics = function()
-        return {version = "1.9.1", initialized = app.initialized,
+        return {version = VERSION, initialized = app.initialized,
             killRegistered = app.killRegistered, critRegistered = app.critRegistered,
             displayMode = app.db and app.db.displayMode,
             critGraphics = app.db and app.db.critGraphics, killGraphics = app.db and app.db.killGraphics,

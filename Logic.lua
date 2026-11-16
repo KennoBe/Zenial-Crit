@@ -12,7 +12,7 @@ for _, preset in ipairs(killChoices) do killChoiceSet[preset] = true end
 for _, style in ipairs(fontStyles) do fontStyleSet[style] = true end
 
 local defaults = {
-    schema = 14,
+    schema = 15,
     critGraphics = true, critSound = true,
     healSound = true,
     killGraphics = true, killSound = true,
@@ -46,6 +46,17 @@ local defaults = {
     scale = 1, nameplateScale = 1, intensity = 2, soundCooldown = .25, x = 0, y = 160,
     separatePositions = false, critX = 0, critY = 160, killX = 0, killY = 160,
     displayMode = "nameplate",
+    -- Schema 15
+    healTexts = {"HEAL CRIT!", "BIG HEAL!", "TOPPED UP!"},
+    streakTexts = {"DOUBLE KILL!", "TRIPLE KILL!", "MULTI KILL!", "MEGA KILL!", "UNSTOPPABLE!"},
+    streakSoundMode = "single", streakSoundIDs = {"doom"},
+    procSoundMode = "single", procSoundIDs = {"laser"},
+    streakSoundChannel = "Master", procSoundChannel = "Master",
+    enabled = true, maxEffects = 3, stackSpacing = 46, critGap = 0, combine = false,
+    critMinPercent = 0, healMinPercent = 0,
+    situationWorld = "all", situationDungeon = "all", situationRaid = "all", situationPvp = "all",
+    streakWindow = 8, streakTargets = "all", streakEscalate = true, streakHideKill = true,
+    procTriggers = {},
 }
 local bounds = {
     scale = {.6, 2.5}, nameplateScale = {.6, 4.2}, intensity = {1, 3}, soundCooldown = {0, 30},
@@ -53,9 +64,73 @@ local bounds = {
     x = {-2000, 2000}, y = {-1200, 1200},
     critX = {-2000, 2000}, critY = {-1200, 1200},
     killX = {-2000, 2000}, killY = {-1200, 1200},
+    maxEffects = {1, 6, 1}, stackSpacing = {0, 120}, critGap = {0, 3, .05},
+    critMinPercent = {0, 100}, healMinPercent = {0, 100}, streakWindow = {2, 30},
 }
 
+local kinds = {"crit", "heal", "kill", "streak", "proc"}
+local animations = {"pop", "slam", "rise", "shake", "pulse", "fade"}
+local animationSet, situationSet, targetSet = {}, {all = true, important = true, off = true}, {all = true, players = true}
+for _, name in ipairs(animations) do animationSet[name] = true end
+L.Kinds, L.Animations = kinds, animations
+
+-- Per-kind style values. Keys already present above keep their schema 14 values.
+local kindStyle = {
+    crit = {Graphics = true, Sound = true, Font = "standard", Color = {.98, .8, .12}, Gradient = false,
+        Color2 = {1, .45, .1}, Size = 1, Anim = "pop", Duration = .85, Alpha = 1, X = 0, Y = 160},
+    heal = {Graphics = false, Sound = true, Font = "standard", Color = {.45, .9, .54}, Gradient = false,
+        Color2 = {.8, 1, .6}, Size = 1, Anim = "rise", Duration = .85, Alpha = 1, X = 0, Y = 160},
+    kill = {Graphics = true, Sound = true, Font = "standard", Color = {1, .36, .06}, Gradient = false,
+        Color2 = {1, .8, .1}, Size = 1, Anim = "pop", Duration = .85, Alpha = 1, Flash = false, X = 0, Y = 160},
+    streak = {Graphics = true, Sound = true, Font = "heavy", Color = {1, .18, .12}, Gradient = true,
+        Color2 = {1, .75, .1}, Size = 1.35, Anim = "slam", Duration = 1.6, Alpha = 1, Flash = false, X = 0, Y = 220},
+    proc = {Graphics = true, Sound = true, Font = "standard", Color = {.35, .8, 1}, Gradient = false,
+        Color2 = {.9, .95, 1}, Size = 1.15, Anim = "pulse", Duration = 1.1, Alpha = 1, Flash = false, X = 0, Y = 100},
+}
+local colorKeys, enums, textKinds = {}, {}, {
+    critTexts = "crit", healTexts = "heal", killTexts = "kill", streakTexts = "streak",
+}
+for _, kind in ipairs(kinds) do
+    for name, value in pairs(kindStyle[kind]) do
+        local key = kind .. name
+        if defaults[key] == nil then defaults[key] = value end
+    end
+    colorKeys[kind .. "Color"], colorKeys[kind .. "Color2"] = true, true
+    enums[kind .. "Anim"] = animationSet
+    if not bounds[kind .. "Size"] then
+        bounds[kind .. "Size"] = {.5, 2.5, .05}
+        bounds[kind .. "Duration"] = {.4, 3, .05}
+        bounds[kind .. "Alpha"] = {.2, 1, .05}
+    end
+    if not bounds[kind .. "X"] then
+        bounds[kind .. "X"], bounds[kind .. "Y"] = {-2000, 2000}, {-1200, 1200}
+    end
+end
+enums.situationWorld, enums.situationDungeon = situationSet, situationSet
+enums.situationRaid, enums.situationPvp = situationSet, situationSet
+enums.streakTargets = targetSet
+
 L.FontStyles = fontStyles
+
+local function deepCopy(value)
+    if type(value) ~= "table" then return value end
+    local result = {}
+    for key, item in pairs(value) do result[key] = deepCopy(item) end
+    return result
+end
+
+function L.Defaults() return deepCopy(defaults) end
+
+-- Resets the given keys to their default values (sound keys included). Unknown keys are ignored.
+function L.ResetKeys(config, keys)
+    if type(config) ~= "table" then return config end
+    for _, key in ipairs(type(keys) == "table" and keys or {}) do
+        if type(key) == "string" and defaults[key] ~= nil and key ~= "schema" then
+            config[key] = deepCopy(defaults[key])
+        end
+    end
+    return config
+end
 
 local function copyTexts(values)
     local result = {}
@@ -82,7 +157,8 @@ local function sanitizeColor(value, fallback)
 end
 
 function L.SanitizeTexts(input, kind)
-    local fallback = kind == "kill" and defaults.killTexts or defaults.critTexts
+    local fallback = kind == "kill" and defaults.killTexts or kind == "heal" and defaults.healTexts
+        or kind == "streak" and defaults.streakTexts or defaults.critTexts
     local values = {}
     if type(input) == "string" then
         input = input:gsub("\r\n", "\n"):gsub("\r", "\n")
@@ -120,11 +196,50 @@ local function sanitizedTexts(values)
 end
 
 function L.PickText(config, kind, random)
-    local values = kind == "kill" and config.killTexts or config.critTexts
+    local values = kind == "kill" and config.killTexts or kind == "heal" and config.healTexts or config.critTexts
     if not sanitizedTexts(values) then values = L.SanitizeTexts(values, kind) end
     local index = type(random) == "function" and random(#values) or math.random(#values)
     if type(index) ~= "number" or index < 1 or index > #values then index = 1 end
     return values[math.floor(index)] or values[1]
+end
+
+local function snapToStep(value, step)
+    value = math.floor(value / step + .5) * step
+    return math.floor(value * 1000000 + .5) / 1000000
+end
+
+local function cleanLine(value, limit)
+    if type(value) ~= "string" then return nil end
+    value = value:gsub("[%c]", ""):match("^%s*(.-)%s*$") or ""
+    value = value:sub(1, limit):match("^%s*(.-)%s*$") or ""
+    return value ~= "" and value or nil
+end
+
+local function sanitizeFont(value, fallback)
+    if fontStyleSet[value] then return value end
+    if type(value) == "string" and value:sub(1, 7) == "shared:" then
+        local name = value:sub(8)
+        if #name >= 1 and #name <= 80 and not name:find("[%c]") then return value end
+    end
+    return fallback
+end
+
+local function sanitizeProcTriggers(value)
+    local result, seen = {}, {}
+    if type(value) ~= "table" then return result end
+    for index = 1, math.min(#value, 100) do
+        local item = value[index]
+        if type(item) == "table" then
+            local id, text = item.id, cleanLine(item.text, 40)
+            if type(id) == "number" and id == id and id >= 1 and id <= 9999999 and id == math.floor(id)
+                and text and not seen[id] then
+                seen[id] = true
+                result[#result + 1] = {id = id, text = text, enabled = item.enabled ~= false}
+                if #result >= 10 then break end
+            end
+        end
+    end
+    return result
 end
 
 function L.Sanitize(input)
@@ -136,16 +251,23 @@ function L.Sanitize(input)
     for key, default in pairs(defaults) do
         if key ~= "schema" and key ~= "customSounds" and key ~= "customSoundNextID"
             and not key:match("SoundIDs$") and not key:match("SoundMode$") then
-            if key == "critTexts" or key == "killTexts" then
-                result[key] = L.SanitizeTexts(input[key], key == "killTexts" and "kill" or "crit")
-            elseif key == "critColor" or key == "killColor" then
+            if textKinds[key] then
+                result[key] = L.SanitizeTexts(input[key], textKinds[key])
+            elseif key == "procTriggers" then
+                result[key] = sanitizeProcTriggers(input[key])
+            elseif colorKeys[key] then
                 result[key] = sanitizeColor(input[key], default)
+            elseif key:match("Font$") then
+                result[key] = sanitizeFont(input[key], default)
             elseif bounds[key] then
                 local value = input[key]
                 if value == nil and (key == "critX" or key == "killX") then value = input.x end
                 if value == nil and (key == "critY" or key == "killY") then value = input.y end
                 if type(value) ~= "number" or value ~= value then value = default end
                 result[key] = math.max(bounds[key][1], math.min(bounds[key][2], value))
+                if bounds[key][3] then
+                    result[key] = math.max(bounds[key][1], math.min(bounds[key][2], snapToStep(result[key], bounds[key][3])))
+                end
                 if key == "intensity" then result[key] = math.floor(result[key]) end
             elseif key == "critGraphics" or key == "critSound" then
                 local legacy
@@ -155,17 +277,17 @@ function L.Sanitize(input)
                 else result[key] = default end
             elseif key == "displayMode" then
                 result[key] = (input[key] == "nameplate" or input[key] == "fixed") and input[key] or default
-            elseif key == "critFont" or key == "killFont" then
-                result[key] = fontStyleSet[input[key]] and input[key] or default
             elseif key == "critSoundRule" or key == "healSoundRule" then
                 result[key] = input[key] == "records" and "records" or "all"
             elseif key:match("SoundChannel$") then
                 local channel = input[key]
                 result[key] = (channel == "Dialog" or channel == "SFX") and channel or "Master"
+            elseif enums[key] then
+                result[key] = enums[key][input[key]] and input[key] or default
             elseif type(default) == "boolean" then
                 if type(input[key]) == "boolean" then result[key] = input[key] else result[key] = default end
             else
-                result[key] = default
+                result[key] = deepCopy(default)
             end
         end
     end
@@ -184,6 +306,7 @@ function L.Sanitize(input)
     local soundFallbacks = {
         crit = legacyCrit, heal = "tada", kill = legacyKill,
         record = "jackpot", healRecord = "jackpot", low = "womp", healLow = "womp",
+        streak = "doom", proc = "laser",
     }
     for category, keys in pairs(NS.Sounds.CategoryKeys) do
         local mode = input[keys.mode]
@@ -194,9 +317,14 @@ function L.Sanitize(input)
     return result
 end
 
+local kindSet = {}
+for _, kind in ipairs(kinds) do kindSet[kind] = true end
+
+local function styleKind(kind) return kindSet[kind] and kind or "crit" end
+
 function L.FontStyle(config, kind)
-    local style = kind == "kill" and config.killFont or config.critFont
-    return fontStyleSet[style] and style or "standard"
+    kind = styleKind(kind)
+    return sanitizeFont(config[kind .. "Font"], "standard")
 end
 
 function L.EffectScale(config)
@@ -205,22 +333,28 @@ function L.EffectScale(config)
 end
 
 function L.Color(config, kind)
-    local value = kind == "kill" and config.killColor or config.critColor
-    local fallback = kind == "kill" and defaults.killColor or defaults.critColor
-    value = sanitizeColor(value, fallback)
+    kind = styleKind(kind)
+    local value = sanitizeColor(config[kind .. "Color"], defaults[kind .. "Color"])
+    return value[1], value[2], value[3]
+end
+
+function L.Color2(config, kind)
+    kind = styleKind(kind)
+    local value = sanitizeColor(config[kind .. "Color2"], defaults[kind .. "Color2"])
     return value[1], value[2], value[3]
 end
 
 function L.Position(config, kind)
-    if config.separatePositions == true then
-        if kind == "kill" then return config.killX, config.killY end
-        return config.critX, config.critY
-    end
-    return config.x, config.y
+    if config.separatePositions ~= true then return config.x, config.y end
+    kind = styleKind(kind)
+    local x, y = config[kind .. "X"], config[kind .. "Y"]
+    if x == nil then x = defaults[kind .. "X"] end
+    if y == nil then y = defaults[kind .. "Y"] end
+    return x, y
 end
 
 function L.NewState()
-    return {recentKills = {}}
+    return {recentKills = {}, streakCount = 0, streakLast = nil}
 end
 
 function L.Output(config, kind)
@@ -229,12 +363,18 @@ function L.Output(config, kind)
     elseif kind == "kill" then
         return config.killGraphics, config.killSound
     elseif kind == "heal" then
-        return false, config.healSound
+        return config.healGraphics, config.healSound
+    elseif kind == "streak" then
+        return config.streakGraphics, config.streakSound
+    elseif kind == "proc" then
+        return config.procGraphics, config.procSound
     end
     return false, false, nil
 end
 
 function L.SoundCategory(config, classification, kind)
+    if kind == "streak" then return config.streakSound and "streak" or nil end
+    if kind == "proc" then return config.procSound and "proc" or nil end
     if kind == "heal" then
         if config.healSoundRule == "records" then
             if classification == "record" and config.healRecordSoundEnabled then return "healRecord" end
@@ -266,6 +406,7 @@ local channelKeys = {
     crit="critSoundChannel", heal="healSoundChannel", kill="killSoundChannel",
     record="recordSoundChannel", healRecord="healRecordSoundChannel",
     low="lowSoundChannel", healLow="healLowSoundChannel",
+    streak="streakSoundChannel", proc="procSoundChannel",
 }
 function L.SoundChannel(config, category)
     local value = config[channelKeys[category] or "critSoundChannel"]
@@ -294,14 +435,13 @@ end
 
 function L.Allow(state, config, kind, now, active, preview)
     if type(now) ~= "number" or now ~= now then return false end
-    if kind ~= "crit" and kind ~= "kill" and kind ~= "heal" then return false end
+    if not kindSet[kind] then return false end
     if preview then return true end
     local graphics, sound = L.Output(config, kind)
     if kind == "crit" then sound = sound or config.recordSoundEnabled or config.lowCritEnabled end
     if kind == "heal" then sound = sound or config.healRecordSoundEnabled or config.healLowEnabled end
     if not graphics and not sound then return false end
-    if kind == "crit" or kind == "heal" then return true end
-    return kind == "kill"
+    return true
 end
 
 function L.AllowKill(state, victimGUID, now)
@@ -321,9 +461,224 @@ function L.AllowKill(state, victimGUID, now)
     return true
 end
 
-function L.Animation(age, intensity)
-    local duration = .85
+-- Animation curves. Returns scale, alpha, dx, dy, done. No tables, no randomness;
+-- shaking uses math.sin of the time. "pop" with duration .85 is the 1.9.1 curve.
+function L.Animation(anim, age, duration, intensity)
+    if type(duration) ~= "number" or duration ~= duration or duration <= 0 then duration = .85 end
+    if type(age) ~= "number" or age ~= age then age = 0 end
+    if type(intensity) ~= "number" or intensity ~= intensity then intensity = 2 end
     local p = math.max(0, math.min(1, age / duration))
+    local done = age >= duration
+    if anim == "slam" then
+        local inv = 1 - math.min(1, p / .15)
+        local wobble = 0
+        if p > .15 then wobble = math.max(0, 1 - (p - .15) / .25) end
+        local tail = p > .6 and math.min(1, (p - .6) / .4) or 0
+        return 1 + inv * inv * (.45 + intensity * .15), 1 - tail * tail,
+            math.sin(age * 55) * intensity * 2.5 * wobble, inv * inv * (12 + intensity * 6), done
+    elseif anim == "rise" then
+        local tail = p > .6 and math.min(1, (p - .6) / .4) or 0
+        return 1 + intensity * .04 * math.sin(math.min(1, p * 4) * math.pi), 1 - tail * tail,
+            0, p * (30 + intensity * 20), done
+    elseif anim == "shake" then
+        local settle = (1 - p) * (1 - p)
+        return 1 + (intensity * .12) * math.sin(math.min(1, p * 3) * math.pi), 1 - p * p,
+            math.sin(age * 50) * intensity * 5 * settle, p * (8 + intensity * 4), done
+    elseif anim == "pulse" then
+        local tail = p > .7 and math.min(1, (p - .7) / .3) or 0
+        return 1 + (.06 + intensity * .06) * math.abs(math.sin(p * 2 * math.pi)), 1 - tail * tail, 0, 0, done
+    elseif anim == "fade" then
+        local alpha = 1
+        if p < .15 then alpha = p / .15
+        elseif p > .65 then alpha = 1 - math.min(1, (p - .65) / .35) ^ 2 end
+        return 1, math.max(0, math.min(1, alpha)), 0, 0, done
+    end
     local pop = 1 + (intensity * .12) * math.sin(math.min(1, p * 3) * math.pi)
-    return pop, 1 - p * p, p * (18 + intensity * 12), p >= 1
+    return pop, 1 - p * p, 0, p * (18 + intensity * 12), done
+end
+
+-- Kill streak: returns count, tier. A kill within `window` seconds of the previous one
+-- continues the streak. tier is count - 1 (0 for the first kill).
+function L.StreakStep(state, now, window)
+    if type(state) ~= "table" or type(now) ~= "number" or now ~= now then return 0, 0 end
+    if type(window) ~= "number" or window ~= window then window = defaults.streakWindow end
+    local last = state.streakLast
+    if type(last) == "number" and now >= last and now - last <= window then
+        state.streakCount = (state.streakCount or 0) + 1
+    else
+        state.streakCount = 1
+    end
+    state.streakLast = now
+    return state.streakCount, L.StreakTier(state.streakCount)
+end
+
+function L.StreakTier(count)
+    if type(count) ~= "number" or count ~= count or count < 2 then return 0 end
+    return math.floor(count) - 1
+end
+
+function L.StreakText(config, tier)
+    if type(tier) ~= "number" or tier ~= tier or tier < 1 then return nil end
+    local values = config.streakTexts
+    if not sanitizedTexts(values) then values = L.SanitizeTexts(values, "streak") end
+    return values[math.min(math.floor(tier), #values)]
+end
+
+local situations = {
+    dungeon = "dungeon", party = "dungeon", scenario = "dungeon", raid = "raid", pvp = "pvp", arena = "pvp",
+}
+function L.Situation(instanceType)
+    return type(instanceType) == "string" and situations[instanceType] or "world"
+end
+
+local situationKeys = {
+    world = "situationWorld", dungeon = "situationDungeon", raid = "situationRaid", pvp = "situationPvp",
+}
+function L.SituationAllows(config, situation, kind, classification)
+    local mode = config[situationKeys[situation] or "situationWorld"]
+    if mode == "off" then return false end
+    if mode ~= "important" then return true end
+    if kind == "kill" or kind == "streak" or kind == "proc" then return true end
+    return classification == "record"
+end
+
+-- Minimum share of the own record for crit and heal output. Unknown or secret
+-- values and a missing record pass.
+function L.PassesThreshold(config, kind, amount, previous)
+    local percent
+    if kind == "crit" then percent = config.critMinPercent
+    elseif kind == "heal" then percent = config.healMinPercent
+    else return true end
+    if type(percent) ~= "number" or percent <= 0 then return true end
+    if type(previous) ~= "number" or previous ~= previous or previous <= 0 then return true end
+    if type(amount) ~= "number" or amount ~= amount then return true end
+    return amount >= previous * (percent / 100)
+end
+
+-- Colors each visible character from color 1 to color 2. UTF-8 characters stay whole,
+-- spaces carry no color code and "|" is escaped.
+function L.GradientText(text, r1, g1, b1, r2, g2, b2)
+    if type(text) ~= "string" or text == "" then return "" end
+    local first = sanitizeColor({r1, g1, b1}, {1, 1, 1})
+    local second = sanitizeColor({r2, g2, b2}, {1, 1, 1})
+    local chars, visible = {}, 0
+    for char in text:gmatch("[^\128-\191][\128-\191]*") do
+        chars[#chars + 1] = char
+        if not char:find("^%s$") then visible = visible + 1 end
+    end
+    local parts, index = {}, 0
+    for _, char in ipairs(chars) do
+        if char:find("^%s$") then
+            parts[#parts + 1] = char
+        else
+            local t = visible > 1 and index / (visible - 1) or 0
+            index = index + 1
+            parts[#parts + 1] = string.format("|cff%02x%02x%02x%s|r",
+                math.floor((first[1] + (second[1] - first[1]) * t) * 255 + .5),
+                math.floor((first[2] + (second[2] - first[2]) * t) * 255 + .5),
+                math.floor((first[3] + (second[3] - first[3]) * t) * 255 + .5),
+                char == "|" and "||" or char)
+        end
+    end
+    return table.concat(parts)
+end
+
+function L.ProcMatch(config, spellID)
+    local list = config.procTriggers
+    if type(list) ~= "table" or type(spellID) ~= "number" then return nil end
+    for index = 1, #list do
+        local item = list[index]
+        if type(item) == "table" and item.enabled ~= false and item.id == spellID then return item end
+    end
+    return nil
+end
+
+function L.HasProcTriggers(config)
+    local list = config.procTriggers
+    if type(list) ~= "table" then return false end
+    for index = 1, #list do
+        local item = list[index]
+        if type(item) == "table" and item.enabled ~= false and type(item.id) == "number" then return true end
+    end
+    return false
+end
+
+-- Presets: only style and behavior keys. Texts, positions, sound choices and files stay.
+local presetKeys = {
+    "intensity", "maxEffects", "stackSpacing", "combine", "critGap", "streakEscalate", "recordSoundEnabled",
+}
+for _, kind in ipairs(kinds) do
+    for _, name in ipairs({"Anim", "Duration", "Size", "Gradient", "Sound"}) do
+        presetKeys[#presetKeys + 1] = kind .. name
+    end
+    if kind == "kill" or kind == "streak" or kind == "proc" then presetKeys[#presetKeys + 1] = kind .. "Flash" end
+end
+L.PresetKeys = presetKeys
+
+local function buildPreset(spec)
+    local values = {}
+    for _, key in ipairs(presetKeys) do values[key] = deepCopy(defaults[key]) end
+    for key, value in pairs(spec) do values[key] = value end
+    return values
+end
+
+local minimal = {intensity = 1, maxEffects = 1, combine = true, critGap = .5, streakEscalate = false,
+    recordSoundEnabled = false}
+local action = {intensity = 3, maxEffects = 4, recordSoundEnabled = true,
+    critAnim = "shake", killAnim = "slam", streakAnim = "slam", procAnim = "pulse", healAnim = "rise",
+    critSize = 1.15, killSize = 1.25, streakSize = 1.6, procSize = 1.3, streakDuration = 1.9,
+    killFlash = true, streakFlash = true, procFlash = true,
+    killGradient = true, streakGradient = true, procGradient = true}
+for _, kind in ipairs(kinds) do
+    minimal[kind .. "Anim"], minimal[kind .. "Sound"] = "fade", false
+    minimal[kind .. "Size"] = kind == "streak" and 1 or .8
+    minimal[kind .. "Duration"] = kind == "streak" and 1 or .7
+    minimal[kind .. "Gradient"] = false
+    if kind == "kill" or kind == "streak" or kind == "proc" then minimal[kind .. "Flash"] = false end
+    action[kind .. "Sound"] = true
+end
+L.Presets = {minimal = buildPreset(minimal), standard = buildPreset({}), action = buildPreset(action)}
+local presetOrder = {"minimal", "standard", "action"}
+
+function L.ApplyPreset(config, name)
+    local preset = L.Presets[name]
+    if type(config) ~= "table" or not preset then return nil end
+    for key, value in pairs(preset) do config[key] = deepCopy(value) end
+    return config
+end
+
+local function sameValue(a, b)
+    if type(a) == "number" and type(b) == "number" then return math.abs(a - b) < 1e-9 end
+    return a == b
+end
+
+function L.PresetOf(config)
+    if type(config) ~= "table" then return "custom" end
+    for _, name in ipairs(presetOrder) do
+        local matches = true
+        for key, value in pairs(L.Presets[name]) do
+            if not sameValue(config[key], value) then matches = false break end
+        end
+        if matches then return name end
+    end
+    return "custom"
+end
+
+-- Which events the current configuration needs. historyEnabled keeps UNIT_COMBAT alive
+-- for the history even when every output is off.
+function L.Needs(config, historyEnabled)
+    local history = historyEnabled == true
+    if config.enabled == false then return {unitCombat = history, partyKill = false, spellcast = false} end
+    local chat = config.chatEnabled == true
+    local unitCombat = history or config.critGraphics == true or config.critSound == true
+        or config.recordSoundEnabled == true or config.lowCritEnabled == true
+        or config.healGraphics == true or config.healSound == true
+        or config.healRecordSoundEnabled == true or config.healLowEnabled == true
+        or (chat and (config.chatCrit == true or config.chatRecord == true or config.chatLow == true
+            or config.chatHeal == true or config.chatHealRecord == true or config.chatHealLow == true))
+    local partyKill = config.killGraphics == true or config.killSound == true
+        or config.streakGraphics == true or config.streakSound == true
+        or (chat and config.chatKill == true)
+    local spellcast = L.HasProcTriggers(config) and (config.procGraphics == true or config.procSound == true)
+    return {unitCombat = unitCombat, partyKill = partyKill, spellcast = spellcast}
 end

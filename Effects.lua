@@ -162,7 +162,7 @@ function Effects.New(api)
     function E:Update(now)
         for index = #self.active, 1, -1 do
             local effect = self.active[index]
-            local scale, alpha, rise, done = NS.Logic.Animation(now - effect.started, effect.intensity)
+            local scale, alpha, _, rise, done = NS.Logic.Animation("pop", now - effect.started, .85, effect.intensity)
             if done then
                 if effect.frame then pcall(effect.frame.Hide, effect.frame) end
                 table.remove(self.active, index)

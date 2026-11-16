@@ -10,6 +10,7 @@
 
 Sounds.lua
 Logic.lua
+Profiles.lua
 History.lua
 Locale.lua
 Theme.lua
