@@ -316,7 +316,7 @@ function app:HandleKill(attackerGUID, victimGUID)
     self:EmitChat("kill")
     local killSound, killOpts = db.killSound and "kill" or nil, nil
     if (db.streakGraphics or db.streakSound) and (db.streakTargets ~= "players" or api:IsPlayerGUID(victimGUID)) then
-        local _, tier = NS.Logic.StreakStep(self.state, now, db.streakWindow)
+        local _, tier = NS.Logic.StreakStep(self.state, now, db.streakWindow, db.streakSteps)
         if tier >= 1 then
             local streakSound = NS.Logic.SoundCategory(db, nil, "streak")
             local shown, _, graphic, played = self:Trigger("streak", false, streakSound, nil,

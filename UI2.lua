@@ -205,7 +205,8 @@ function UI.New(app, parent, embedded)
     local function previewOptions()
         local options = {{"crit", tr("Crit")}, {"heal", tr("Heal crit")}, {"kill", tr("Kill")}}
         local texts = app.db and app.db.streakTexts or {}
-        for index = 1, math.min(5, #texts) do
+        local steps = app.db and app.db.streakSteps or {}
+        for index = 1, math.min(10, #steps, #texts) do
             options[#options + 1] = {"streak" .. index, string.format(tr("Kill streak: %s"), texts[index])}
         end
         options[#options + 1] = {"proc", tr("Proc")}

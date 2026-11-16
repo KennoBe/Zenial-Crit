@@ -12,7 +12,7 @@ for _, preset in ipairs(killChoices) do killChoiceSet[preset] = true end
 for _, style in ipairs(fontStyles) do fontStyleSet[style] = true end
 
 local defaults = {
-    schema = 15,
+    schema = 16,
     critGraphics = true, critSound = true,
     healSound = true,
     killGraphics = true, killSound = true,
@@ -48,7 +48,9 @@ local defaults = {
     displayMode = "nameplate",
     -- Schema 15
     healTexts = {"HEAL CRIT!", "BIG HEAL!", "TOPPED UP!"},
-    streakTexts = {"DOUBLE KILL!", "TRIPLE KILL!", "MULTI KILL!", "MEGA KILL!", "UNSTOPPABLE!"},
+    -- Schema 16: kills in a streak at which each step (and its text and sound) begins.
+    streakTexts = {"DOUBLE KILL!", "TRIPLE KILL!", "ULTRA KILL!", "MEGA KILL!", "MONSTER KILL!"},
+    streakSteps = {2, 3, 4, 5, 8},
     streakSoundMode = "single", streakSoundIDs = {"announcer"},
     procSoundMode = "single", procSoundIDs = {"laser"},
     streakSoundChannel = "Master", procSoundChannel = "Master",
@@ -260,6 +262,60 @@ local function sanitizeProcTriggers(value)
     return result
 end
 
+local STEP_MIN, STEP_MAX, STEP_COUNT = 2, 99, 10
+
+-- Ascending whole numbers from 2 to 99, at most 10. Invalid entries and duplicates drop out;
+-- nothing left means the default.
+local function sanitizeSteps(value)
+    local result, seen = {}, {}
+    if type(value) == "table" then
+        for index = 1, #value do
+            local item = value[index]
+            if type(item) == "number" and item == item and item >= STEP_MIN and item <= STEP_MAX
+                and item == math.floor(item) and not seen[item] then
+                seen[item] = true
+                result[#result + 1] = item
+            end
+        end
+    end
+    table.sort(result)
+    while #result > STEP_COUNT do result[#result] = nil end
+    if #result == 0 then return copyArray(defaults.streakSteps) end
+    return result
+end
+
+function L.StreakStepsText(config)
+    local steps = sanitizeSteps(type(config) == "table" and config.streakSteps or nil)
+    local parts = {}
+    for index = 1, #steps do parts[index] = tostring(steps[index]) end
+    return table.concat(parts, ", ")
+end
+
+-- Numbers separated by comma, semicolon or space. Returns the list or nil when nothing valid was typed.
+function L.ParseStreakSteps(text)
+    if type(text) ~= "string" then return nil end
+    local values = {}
+    for token in text:gmatch("[^,;%s]+") do
+        local number = token:match("^%d+$") and tonumber(token) or nil
+        if not number then return nil end
+        values[#values + 1] = number
+    end
+    if #values == 0 then return nil end
+    for _, number in ipairs(values) do
+        if number < STEP_MIN or number > STEP_MAX then return nil end
+    end
+    return sanitizeSteps(values)
+end
+
+local oldStreakTexts = {"DOUBLE KILL!", "TRIPLE KILL!", "MULTI KILL!", "MEGA KILL!", "UNSTOPPABLE!"}
+local function isOldStreakDefault(value)
+    if type(value) ~= "table" or #value ~= #oldStreakTexts then return false end
+    for index = 1, #oldStreakTexts do
+        if value[index] ~= oldStreakTexts[index] then return false end
+    end
+    return true
+end
+
 function L.Sanitize(input)
     input = type(input) == "table" and input or {}
     local result = {schema = defaults.schema}
@@ -269,8 +325,12 @@ function L.Sanitize(input)
     for key, default in pairs(defaults) do
         if key ~= "schema" and key ~= "customSounds" and key ~= "customSoundNextID"
             and not key:match("SoundIDs$") and not key:match("SoundMode$") then
-            if textKinds[key] then
-                result[key] = L.SanitizeTexts(input[key], textKinds[key])
+            if key == "streakSteps" then
+                result[key] = sanitizeSteps(input[key])
+            elseif textKinds[key] then
+                local texts = input[key]
+                if key == "streakTexts" and input.schema == 15 and isOldStreakDefault(texts) then texts = nil end
+                result[key] = L.SanitizeTexts(texts, textKinds[key])
             elseif key == "procTriggers" then
                 result[key] = sanitizeProcTriggers(input[key])
             elseif colorKeys[key] then
@@ -519,8 +579,9 @@ function L.Animation(anim, age, duration, intensity)
 end
 
 -- Kill streak: returns count, tier. A kill within `window` seconds of the previous one
--- continues the streak. tier is count - 1 (0 for the first kill).
-function L.StreakStep(state, now, window)
+-- continues the streak; every kill starts the window anew. tier is the number of entries
+-- in `steps` that are at most count (0 for the first kill).
+function L.StreakStep(state, now, window, steps)
     if type(state) ~= "table" or type(now) ~= "number" or now ~= now then return 0, 0 end
     if type(window) ~= "number" or window ~= window then window = defaults.streakWindow end
     local last = state.streakLast
@@ -530,12 +591,18 @@ function L.StreakStep(state, now, window)
         state.streakCount = 1
     end
     state.streakLast = now
-    return state.streakCount, L.StreakTier(state.streakCount)
+    return state.streakCount, L.StreakTier(state.streakCount, steps)
 end
 
-function L.StreakTier(count)
-    if type(count) ~= "number" or count ~= count or count < 2 then return 0 end
-    return math.floor(count) - 1
+function L.StreakTier(count, steps)
+    if type(count) ~= "number" or count ~= count then return 0 end
+    if type(steps) ~= "table" then steps = defaults.streakSteps end
+    local tier = 0
+    for index = 1, #steps do
+        local step = steps[index]
+        if type(step) == "number" and step <= count then tier = tier + 1 end
+    end
+    return tier
 end
 
 function L.StreakText(config, tier)

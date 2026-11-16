@@ -47,8 +47,15 @@ function Page.Build(view, form)
     form:Card("Kill streak")
     form:Toggle({key = "streakGraphics", label = "Show text"})
     form:Toggle({key = "streakSound", label = "Play sound"})
-    form:Slider({key = "streakWindow", label = "Time until the streak ends", desc = "The next kill has to follow within this time.",
+    form:Slider({key = "streakWindow", label = "Time until the streak ends", desc = "Every kill starts this time again.",
         min = 2, max = 30, step = 1, format = "%d s"})
+    form:Input({label = "Kills per step", advanced = true, width = 260, keys = {"streakSteps"},
+        desc = "Line 1 of the streak texts applies from the first number, line 2 from the second.",
+        get = function() return NS.Logic.StreakStepsText(app.db) end,
+        set = function(value)
+            local steps = NS.Logic.ParseStreakSteps(value)
+            if steps then app.db.streakSteps = steps end
+        end})
     form:Select({key = "streakTargets", label = "Counts", advanced = true,
         options = {{"all", "All kills"}, {"players", "Player kills only"}}})
     form:Toggle({key = "streakHideKill", label = "Replace the kill text", advanced = true,

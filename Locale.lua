@@ -2,7 +2,7 @@ local _, NS = ...
 local german = type(GetLocale) == "function" and GetLocale() == "deDE"
 local DE = {
     ["On"]="Ein",["Off"]="Aus",["Graphics"]="Grafik",["Sound"]="Sound",["Color"]="Farbe",
-    ["Comic hit"]="Comic-Hit",["Squeak"]="Quietschen",["Crit mix (weighted)"]="Krit-Mix (gewichtet)",["Kill mix (weighted)"]="Kill-Mix (gewichtet)",["Announcer: Double kill"]="Ansager: Double Kill",["Announcer: Triple kill"]="Ansager: Triple Kill",["Announcer: Multi kill"]="Ansager: Multi Kill",["Announcer: Mega kill"]="Ansager: Mega Kill",["Announcer: Unstoppable"]="Ansager: Unstoppable",["Announcer (by step)"]="Ansager (je Stufe)",["Game over"]="Game Over",["Falling"]="Absturz",
+    ["Comic hit"]="Comic-Hit",["Squeak"]="Quietschen",["Crit mix (weighted)"]="Krit-Mix (gewichtet)",["Kill mix (weighted)"]="Kill-Mix (gewichtet)",["Announcer: Double kill"]="Ansager: Double Kill",["Announcer: Triple kill"]="Ansager: Triple Kill",["Announcer: Ultra kill"]="Ansager: Ultra Kill",["Announcer: Mega kill"]="Ansager: Mega Kill",["Announcer: Monster kill"]="Ansager: Monster Kill",["Announcer (by step)"]="Ansager (je Stufe)",["Game over"]="Game Over",["Falling"]="Absturz",
     ["Font style"]="Schriftstil",["Epic"]="Episch",["Heavy"]="Wuchtig",
     ["Effect & damage font"]="Effekt- & Schadensschrift",
     ["Size"]="Größe",["Movement"]="Bewegung",["Shared position"]="Gemeinsame Position",
@@ -104,7 +104,9 @@ local DE = {
     ['Heals on your target can come from other players.']='Heals auf dein Ziel können von anderen Spielern stammen.',
     ['Your own kills and those of your pet count.']='Es zählen eigene Kills und die deines Begleiters.',
     ['Time until the streak ends']='Zeit bis die Serie endet',
-    ['The next kill has to follow within this time.']='Der nächste Kill muss in dieser Zeit folgen.',
+    ['Kills per step']='Kills je Stufe',
+    ['Line 1 of the streak texts applies from the first number, line 2 from the second.']='Zeile 1 der Serientexte gilt ab der ersten Zahl, Zeile 2 ab der zweiten.',
+    ['Every kill starts this time again.']='Jeder Kill startet diese Zeit neu.',
     ['Counts']='Es zählen',
     ['All kills']='Alle Kills',
     ['Player kills only']='Nur Spieler-Kills',
@@ -137,7 +139,7 @@ local DE = {
     ['Is multiplied by the overall size.']='Wird mit der Gesamtgröße multipliziert.',
     ['Opacity']='Deckkraft',
     ['Texts, one per line. One is picked at random.']='Texte, einer je Zeile. Einer wird zufällig gewählt.',
-    ['Texts per step, one per line. Line 1 is the second kill.']='Texte je Stufe, einer je Zeile. Zeile 1 ist der zweite Kill.',
+    ['Texts per step, one per line. You set the steps on the Events page.']='Texte je Stufe, einer je Zeile. Die Stufen legst du auf der Seite Ereignisse fest.',
     ['You set the text of a proc on the Procs page.']='Den Text eines Procs legst du auf der Seite Procs fest.',
     ['Position']='Position',
     ['Appears over the nameplate.']='Erscheint über der Namensplakette.',

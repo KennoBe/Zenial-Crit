@@ -15,11 +15,16 @@ local builtinFiles = {
     fall = "fall.wav", meme_bonk = "meme_bonk.mp3",
     meme_bowomp = "meme_bowomp.mp3", meme_bruh = "meme_bruh.mp3",
     meme_oof = "meme_oof.mp3",
-    voice_double = "voice_double.wav", voice_triple = "voice_triple.wav", voice_multi = "voice_multi.wav",
-    voice_mega = "voice_mega.wav", voice_unstoppable = "voice_unstoppable.wav",
+    streak_double = "streak_double.mp3", streak_triple = "streak_triple.mp3", streak_ultra = "streak_ultra.mp3",
+    streak_mega = "streak_mega.mp3", streak_monster = "streak_monster.mp3",
 }
--- The announcer says the step of the kill streak: step 1 = double kill ... step 5 and higher = unstoppable.
-local announcerSteps = {"voice_double", "voice_triple", "voice_multi", "voice_mega", "voice_unstoppable"}
+-- The announcer says the step of the kill streak: step 1 = double kill ... step 5 and higher = monster kill.
+local announcerSteps = {"streak_double", "streak_triple", "streak_ultra", "streak_mega", "streak_monster"}
+-- Sound IDs of earlier versions, rewritten when a saved choice is checked.
+local legacyIDs = {
+    voice_double = "streak_double", voice_triple = "streak_triple", voice_multi = "streak_ultra",
+    voice_mega = "streak_mega", voice_unstoppable = "streak_monster",
+}
 
 local labels = {
     pop = "Pop", impact = "Impact", arcade = "Arcade", finisher = "Finisher",
@@ -29,14 +34,14 @@ local labels = {
     meme_bonk = "Bonk (Meme)", meme_bowomp = "Womp (Meme)",
     meme_bruh = "Bruh (Meme)", meme_oof = "Oof (Meme)",
     critmix = "Crit mix (weighted)", killmix = "Kill mix (weighted)",
-    voice_double = "Announcer: Double kill", voice_triple = "Announcer: Triple kill",
-    voice_multi = "Announcer: Multi kill", voice_mega = "Announcer: Mega kill",
-    voice_unstoppable = "Announcer: Unstoppable", announcer = "Announcer (by step)",
+    streak_double = "Announcer: Double kill", streak_triple = "Announcer: Triple kill",
+    streak_ultra = "Announcer: Ultra kill", streak_mega = "Announcer: Mega kill",
+    streak_monster = "Announcer: Monster kill", announcer = "Announcer (by step)",
 }
 -- Only these display names are words; the rest are proper names/onomatopoeia.
 -- Sound IDs and files never change with the locale.
 local translatable = { punch = true, squeak = true, gameover = true, fall = true, critmix = true, killmix = true,
-    voice_double = true, voice_triple = true, voice_multi = true, voice_mega = true, voice_unstoppable = true,
+    streak_double = true, streak_triple = true, streak_ultra = true, streak_mega = true, streak_monster = true,
     announcer = true }
 local function label(id)
     local text = labels[id]
@@ -160,6 +165,7 @@ function S.SanitizeIDs(value, fallback, config)
     if type(value) == "table" then
         for i = 1, math.min(#value, 30) do
             local id = value[i]
+            if legacyIDs[id] then id = legacyIDs[id] end
             if type(id) == "string" and not seen[id]
                 and S.IsKnownRef(config, id, nil, true) then
                 result[#result + 1] = id
@@ -177,7 +183,7 @@ function S.Catalog(config, env)
         "pop", "impact", "arcade", "finisher", "jackpot", "laser", "tada", "doom",
         "bonk", "klong", "punch", "squeak", "bruh", "womp", "gameover", "fall",
         "meme_bonk", "meme_bowomp", "meme_bruh", "meme_oof", "critmix", "killmix",
-        "voice_double", "voice_triple", "voice_multi", "voice_mega", "voice_unstoppable", "announcer",
+        "streak_double", "streak_triple", "streak_ultra", "streak_mega", "streak_monster", "announcer",
     }
     for i = 1, #ordered do
         local id = ordered[i]

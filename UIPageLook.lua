@@ -53,7 +53,7 @@ function Page.Build(view, form)
     form:Texts({key = key("Texts"), keys = Page.KindKeys("Texts"), maxLines = 20, maxChars = 40,
         visible = function() return not is("proc") end,
         label = function()
-            if is("streak") then return "Texts per step, one per line. Line 1 is the second kill." end
+            if is("streak") then return "Texts per step, one per line. You set the steps on the Events page." end
             return "Texts, one per line. One is picked at random."
         end})
     form:Note({visible = function() return is("proc") end, text = "You set the text of a proc on the Procs page."})
