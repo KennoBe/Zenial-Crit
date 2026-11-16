@@ -29,6 +29,8 @@ local function upper(value)
     return (string.upper(value):gsub("\195[\164\182\188]", UMLAUTS))
 end
 
+Form.Upper = upper
+
 local function round(value, step, minimum)
     local snapped = minimum + math.floor((value - minimum) / step + .5) * step
     return tonumber(string.format("%.8g", snapped))

@@ -109,7 +109,7 @@ function Effects.New(api)
 
     local priorities = {crit = 1, heal = 1, low = 1, healLow = 1, record = 2, healRecord = 2, kill = 3, streak = 4, proc = 2}
 
-    function E:PlayCategory(category, config, now, preview, retryID)
+    function E:PlayCategory(category, config, now, preview, retryID, tier)
         if not priorities[category] then return false, "No sound category selected." end
         local enabled = category == "kill" and config.killSound
             or category == "crit" and config.critSound
@@ -133,7 +133,7 @@ function Effects.New(api)
             return false, "Sound pause is still active."
         end
         local candidates = NS.Sounds.Candidates(
-            config, category, api.env, math.random, self.lastSound[category], self.failedSounds
+            config, category, api.env, math.random, self.lastSound[category], self.failedSounds, tier
         )
         if #candidates == 0 then return false, "No available sound selected." end
         api:StopAudio()
@@ -266,7 +266,7 @@ function Effects.New(api)
         end
         if shown and config[kind .. "Flash"] == true then self:StartFlash(config, kind, now) end
         local played, reason = false, nil
-        if soundCategory then played, reason = self:PlayCategory(soundCategory, config, now, preview) end
+        if soundCategory then played, reason = self:PlayCategory(soundCategory, config, now, preview, nil, opts.tier) end
         return shown, played, reason
     end
 

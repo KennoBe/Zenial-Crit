@@ -10,6 +10,27 @@ local SUMMARY_SPELLS = 8
 
 local function charCount(text) return #(text:gsub("[\128-\191]", "")) end
 
+-- Keeps whole UTF-8 characters.
+local function truncate(text, limit)
+    if charCount(text) <= limit then return text end
+    local count, last = 0, 0
+    for position, char in text:gmatch("()([^\128-\191][\128-\191]*)") do
+        count = count + 1
+        if count > limit then break end
+        last = position + #char - 1
+    end
+    return text:sub(1, last)
+end
+
+-- Text of a trigger taken over from the spell list: the spell name in capitals plus "!".
+local function triggerText(name)
+    if type(name) ~= "string" then return "PROC!" end
+    name = name:gsub("%c", ""):match("^%s*(.-)%s*$")
+    if name == "" then return "PROC!" end
+    return truncate(NS.UIForm.Upper(name), MAX_TEXT - 1) .. "!"
+end
+Page.TriggerText = triggerText
+
 -- A row of the working copy: {enabled, idText, text}. Returns the numeric id, the trimmed text.
 local function parseRow(item)
     local id
@@ -149,13 +170,68 @@ function Page.Build(view, form)
         entries[#entries + 1] = {enabled = true, idText = "", text = "PROC!"}
         page.refresh()
     end}})
+    local spellLog = app.spellLog
+    local function used(id)
+        for _, item in ipairs(ensure()) do
+            if parseRow(item) == id then return true end
+        end
+        return false
+    end
+    local function useSpell(id)
+        local entries = ensure()
+        if used(id) or #entries >= MAX_TRIGGERS then return end
+        entries[#entries + 1] = {enabled = true, idText = tostring(id), text = triggerText(api:SpellName(id))}
+        commit()
+    end
+    form:Buttons({{text = function() return spellLog.active and "Stop recording my spells" or "Record my spells" end,
+        onClick = function()
+            if spellLog.active then app:SetSpellCapture(false)
+            else app:ClearSpellLog(); app:SetSpellCapture(true) end
+        end}})
+    form:Note({text = "Turn this on, fight for a moment and pick the spell below. You need no ID."})
+    form:Note({text = function() return spellLog.active and #spellLog.list == 0 and "Nothing cast yet." or "" end})
+    local spellRows = {}
+    view.procSpellRows = spellRows
+    local spellList = form:Custom({visible = function() return #spellLog.list > 0 end,
+        height = function() return #spellLog.list * ROW + 4 end,
+        refresh = function(frame)
+            local kit = view.kit
+            for index, entry in ipairs(spellLog.list) do
+                local rf = spellRows[index]
+                if not rf then
+                    rf = api:Frame("Frame", nil, frame)
+                    rf:SetSize(608, ROW)
+                    rf.name = kit.label(rf, "", 0, -10, 230, "GameFontHighlightSmall")
+                    rf.name:SetHeight(14)
+                    rf.info = kit.label(rf, "", 240, -10, 210, "GameFontHighlightSmall", "muted")
+                    rf.info:SetHeight(14)
+                    rf.use = kit.button(rf, "Use", 462, -4, 140, function() if rf.spellID then useSpell(rf.spellID) end end)
+                    rf.use:SetHeight(26)
+                    spellRows[index] = rf
+                end
+                rf.index, rf.spellID = index, entry.id
+                rf:ClearAllPoints(); rf:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(index - 1) * ROW)
+                rf.name:SetText(api:SpellName(entry.id) or tr("Unknown spell"))
+                rf.info:SetText(string.format("ID %d \194\183 \195\151%d", entry.id, entry.count))
+                if T then T.Tint(rf.info, "SetTextColor", "dim") end
+                local taken = used(entry.id)
+                rf.use:SetText(taken and tr("Already a trigger") or tr("Use"))
+                rf.use:SetEnabled(not taken and #ensure() < MAX_TRIGGERS)
+                rf:Show()
+            end
+            for index = #spellLog.list + 1, #spellRows do spellRows[index]:Hide() end
+        end})
+    view.procSpellList = spellList
+    form:Note({text = function()
+        return #spellLog.list > 0 and "A proc that shows up here as its own entry can be used as a trigger." or ""
+    end})
     form:Toggle({key = "procGraphics", label = "Show text"})
     form:Toggle({key = "procSound", label = "Play sound"})
 
     form:Card("Class procs")
     form:Note({text = function()
         if api:PlayerClass() == "SHAMAN" then
-            return "Windfury cannot be recognized reliably yet. A recording in the game decides whether it becomes available."
+            return "Windfury cannot be recognized reliably yet. Record your spells above while you fight with Windfury: if it shows up as its own entry, it can be used."
         end
         return "No proc of your class can be recognized reliably yet."
     end})
@@ -192,7 +268,7 @@ function Page.Build(view, form)
     end})
     form:Note({advanced = true, text = function() return summary() and "Type /reload so the recording is saved." or "" end})
 
-    -- The status line follows a running recording once a second, only while this page is shown.
+    -- The status line and the spell list follow a running recording once a second, only while this page is shown.
     local ticker = api:Frame("Frame", nil, form.parent)
     local elapsedTotal = 0
     local function onUpdate(_, elapsed)
@@ -201,7 +277,7 @@ function Page.Build(view, form)
     end
     local function attach()
         elapsedTotal = 0
-        ticker:SetScript("OnUpdate", running() and view.page == "procs" and onUpdate or nil)
+        ticker:SetScript("OnUpdate", (running() or spellLog.active) and view.page == "procs" and onUpdate or nil)
     end
     page.afterRefresh = attach
     page.onHide = function() ticker:SetScript("OnUpdate", nil) end

@@ -51,6 +51,11 @@ function Page.Build(view, form)
         get = function() return app.db[keys().ids] and app.db[keys().ids][1] end,
         set = function(value) app.db[keys().mode], app.db[keys().ids] = "single", {value} end})
     form:Note({text = function()
+        local ids = app.db[keys().ids]
+        if mixed() or not ids or ids[1] ~= "announcer" then return "" end
+        return "Says the step of the kill streak. The words do not follow your own texts."
+    end})
+    form:Note({text = function()
         if not mixed() then return "" end
         local names = view:SoundSummary(view.soundCategory)
         if #names == 0 then return "No sound selected." end

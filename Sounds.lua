@@ -15,7 +15,11 @@ local builtinFiles = {
     fall = "fall.wav", meme_bonk = "meme_bonk.mp3",
     meme_bowomp = "meme_bowomp.mp3", meme_bruh = "meme_bruh.mp3",
     meme_oof = "meme_oof.mp3",
+    voice_double = "voice_double.wav", voice_triple = "voice_triple.wav", voice_multi = "voice_multi.wav",
+    voice_mega = "voice_mega.wav", voice_unstoppable = "voice_unstoppable.wav",
 }
+-- The announcer says the step of the kill streak: step 1 = double kill ... step 5 and higher = unstoppable.
+local announcerSteps = {"voice_double", "voice_triple", "voice_multi", "voice_mega", "voice_unstoppable"}
 
 local labels = {
     pop = "Pop", impact = "Impact", arcade = "Arcade", finisher = "Finisher",
@@ -25,10 +29,15 @@ local labels = {
     meme_bonk = "Bonk (Meme)", meme_bowomp = "Womp (Meme)",
     meme_bruh = "Bruh (Meme)", meme_oof = "Oof (Meme)",
     critmix = "Crit mix (weighted)", killmix = "Kill mix (weighted)",
+    voice_double = "Announcer: Double kill", voice_triple = "Announcer: Triple kill",
+    voice_multi = "Announcer: Multi kill", voice_mega = "Announcer: Mega kill",
+    voice_unstoppable = "Announcer: Unstoppable", announcer = "Announcer (by step)",
 }
 -- Only these display names are words; the rest are proper names/onomatopoeia.
 -- Sound IDs and files never change with the locale.
-local translatable = { punch = true, squeak = true, gameover = true, fall = true, critmix = true, killmix = true }
+local translatable = { punch = true, squeak = true, gameover = true, fall = true, critmix = true, killmix = true,
+    voice_double = true, voice_triple = true, voice_multi = true, voice_mega = true, voice_unstoppable = true,
+    announcer = true }
 local function label(id)
     local text = labels[id]
     if text and translatable[id] and NS.Locale then return NS.Locale.Text(text) end
@@ -138,7 +147,7 @@ local function sharedPath(env, name)
 end
 
 function S.IsKnownRef(config, id, env, keepMissing)
-    if builtinFiles[id] or id == "critmix" or id == "killmix" then return true end
+    if builtinFiles[id] or id == "critmix" or id == "killmix" or id == "announcer" then return true end
     if type(id) ~= "string" then return false end
     if id:match("^custom:") then return S.CustomByID(config, id) ~= nil end
     if id:match("^shared:") then return keepMissing or sharedPath(env, id:sub(8)) ~= nil end
@@ -168,6 +177,7 @@ function S.Catalog(config, env)
         "pop", "impact", "arcade", "finisher", "jackpot", "laser", "tada", "doom",
         "bonk", "klong", "punch", "squeak", "bruh", "womp", "gameover", "fall",
         "meme_bonk", "meme_bowomp", "meme_bruh", "meme_oof", "critmix", "killmix",
+        "voice_double", "voice_triple", "voice_multi", "voice_mega", "voice_unstoppable", "announcer",
     }
     for i = 1, #ordered do
         local id = ordered[i]
@@ -215,7 +225,12 @@ local function randomIndex(random, maximum)
     return 1
 end
 
-function S.ResolveRef(config, id, env, random)
+function S.ResolveRef(config, id, env, random, tier)
+    if id == "announcer" then
+        local step = type(tier) == "number" and tier == tier and tier >= 1 and math.floor(tier) or 1
+        local picked = announcerSteps[math.min(step, #announcerSteps)]
+        return mediaRoot .. builtinFiles[picked], picked
+    end
     if id == "critmix" or id == "killmix" then
         local pool = id == "critmix" and critPool or killPool
         local picked = pool[randomIndex(random, #pool)]
@@ -228,7 +243,7 @@ function S.ResolveRef(config, id, env, random)
     return nil, id
 end
 
-function S.Candidates(config, category, env, random, lastID, failed)
+function S.Candidates(config, category, env, random, lastID, failed, tier)
     local keys = categoryKeys[category]
     if not keys then return {} end
     local ids = copyArray(config[keys.ids])
@@ -244,7 +259,7 @@ function S.Candidates(config, category, env, random, lastID, failed)
     for i = 1, #ids do
         local id = ids[i]
         if not failed or not failed[id] then
-            local path, playedID = S.ResolveRef(config, id, env, random)
+            local path, playedID = S.ResolveRef(config, id, env, random, tier)
             if path then result[#result + 1] = { id = id, playedID = playedID, path = path } end
         end
     end

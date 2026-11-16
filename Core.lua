@@ -2,7 +2,8 @@ local _, NS = ...
 local api = NS.Adapter.New(_G)
 local app = {api = api, state = NS.Logic.NewState(), initialized = false, killRegistered = false, critRegistered = false,
     spellcastRegistered = false, eventState = {unitCombat = "off", partyKill = "off", spellcast = "off"},
-    situation = "world", procSeen = {}, views = {}, sessionRecords = {}}
+    situation = "world", procSeen = {}, views = {}, sessionRecords = {},
+    spellLog = {active = false, list = {}}}
 NS.App = app
 local frame = api:Frame()
 if not frame then return end
@@ -127,12 +128,25 @@ function app:SetHistoryEnabled(enabled)
     if self.initialized then self:SyncEvents() end
 end
 
+local SPELL_LOG_MAX = 8
+
+-- Session-only list of the spells the player casts, so a trigger needs no spell ID typed in.
+function app:SetSpellCapture(enabled)
+    self.spellLog.active = enabled == true
+    if self.initialized then self:SyncEvents() end
+    for _, view in ipairs(self.views) do view:Refresh() end
+end
+
+function app:ClearSpellLog()
+    self.spellLog.list = {}
+end
+
 local eventNames = {unitCombat = "UNIT_COMBAT", partyKill = "PARTY_KILL", spellcast = "UNIT_SPELLCAST_SUCCEEDED"}
 
 -- Registers only the events the current configuration needs.
 function app:SyncEvents()
     if not self.db then return end
-    local needs = NS.Logic.Needs(self.db, self.history and self.history.enabled == true)
+    local needs = NS.Logic.Needs(self.db, self.history and self.history.enabled == true, self.spellLog.active)
     local function sync(name, flag, register)
         if needs[name] then
             if not self[flag] then self[flag] = register() end
@@ -239,15 +253,15 @@ function app:Preview(kind, tier)
     return self:Trigger(kind, true, kind, nil, opts)
 end
 
-function app:PreviewSound(category, retryID)
+function app:PreviewSound(category, retryID, tier)
     local now = api:Time()
     if not now then return false, "Time could not be read." end
-    return self.effects:PlayCategory(category, self.db, now, true, retryID)
+    return self.effects:PlayCategory(category, self.db, now, true, retryID, tier)
 end
 
-function app:PreviewSoundRef(id, category)
+function app:PreviewSoundRef(id, category, tier)
     self.effects:RetrySound(id)
-    local path = NS.Sounds.ResolveRef(self.db, id, api.env, math.random)
+    local path = NS.Sounds.ResolveRef(self.db, id, api.env, math.random, tier)
     if not path then return false, "Sound source is currently unavailable." end
     api:StopAudio()
     if api:PlayPath(path, NS.Logic.SoundChannel(self.db, category or "crit")) then return true end
@@ -318,12 +332,29 @@ function app:HandleKill(attackerGUID, victimGUID)
     return self:Trigger("kill", false, killSound, victimGUID, killOpts)
 end
 
+-- Newest first, one entry per spell, at most SPELL_LOG_MAX spells (the one cast longest ago drops out).
+function app:LogSpell(spellID, now)
+    local list = self.spellLog.list
+    local entry
+    for index = 1, #list do
+        if list[index].id == spellID then entry = table.remove(list, index) break end
+    end
+    if entry then
+        entry.count, entry.at = entry.count + 1, now
+    else
+        entry = {id = spellID, count = 1, at = now}
+    end
+    table.insert(list, 1, entry)
+    while #list > SPELL_LOG_MAX do table.remove(list) end
+end
+
 function app:HandleSpellcast(unit, _, spellID)
     if not api:Public(unit) or unit ~= "player" then return false end
     if not api:Public(spellID) or type(spellID) ~= "number" then return false end
+    local now = api:Time()
+    if self.spellLog.active then self:LogSpell(spellID, now or 0) end
     local trigger = NS.Logic.ProcMatch(self.db, spellID)
     if not trigger then return false end
-    local now = api:Time()
     if not now then return false end
     local last = self.procSeen[spellID]
     if last and now >= last and now - last < .3 then return false end

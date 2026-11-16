@@ -49,7 +49,7 @@ local defaults = {
     -- Schema 15
     healTexts = {"HEAL CRIT!", "BIG HEAL!", "TOPPED UP!"},
     streakTexts = {"DOUBLE KILL!", "TRIPLE KILL!", "MULTI KILL!", "MEGA KILL!", "UNSTOPPABLE!"},
-    streakSoundMode = "single", streakSoundIDs = {"doom"},
+    streakSoundMode = "single", streakSoundIDs = {"announcer"},
     procSoundMode = "single", procSoundIDs = {"laser"},
     streakSoundChannel = "Master", procSoundChannel = "Master",
     enabled = true, maxEffects = 3, stackSpacing = 60, critGap = 0, combine = false,
@@ -324,7 +324,7 @@ function L.Sanitize(input)
     local soundFallbacks = {
         crit = legacyCrit, heal = "tada", kill = legacyKill,
         record = "jackpot", healRecord = "jackpot", low = "womp", healLow = "womp",
-        streak = "doom", proc = "laser",
+        streak = "announcer", proc = "laser",
     }
     for category, keys in pairs(NS.Sounds.CategoryKeys) do
         local mode = input[keys.mode]
@@ -687,9 +687,10 @@ end
 
 -- Which events the current configuration needs. historyEnabled keeps UNIT_COMBAT alive
 -- for the history even when every output is off.
-function L.Needs(config, historyEnabled)
+function L.Needs(config, historyEnabled, capture)
     local history = historyEnabled == true
-    if config.enabled == false then return {unitCombat = history, partyKill = false, spellcast = false} end
+    local capturing = capture == true
+    if config.enabled == false then return {unitCombat = history, partyKill = false, spellcast = capturing} end
     local chat = config.chatEnabled == true
     local unitCombat = history or config.critGraphics == true or config.critSound == true
         or config.recordSoundEnabled == true or config.lowCritEnabled == true
@@ -700,6 +701,6 @@ function L.Needs(config, historyEnabled)
     local partyKill = config.killGraphics == true or config.killSound == true
         or config.streakGraphics == true or config.streakSound == true
         or (chat and config.chatKill == true)
-    local spellcast = L.HasProcTriggers(config) and (config.procGraphics == true or config.procSound == true)
+    local spellcast = capturing or (L.HasProcTriggers(config) and (config.procGraphics == true or config.procSound == true))
     return {unitCombat = unitCombat, partyKill = partyKill, spellcast = spellcast}
 end
