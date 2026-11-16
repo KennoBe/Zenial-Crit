@@ -3,7 +3,7 @@
 ## Notes: Effects for crits, kills, kill streaks and procs
 ## Notes-deDE: Effekte für Krits, Kills, Kill-Serien und Procs
 ## Author: ZENIAL
-## Version: 2.0.0
+## Version: 2.1.0
 ## IconTexture: Interface\AddOns\ZenialCrit\Media\Icon.tga
 ## SavedVariables: ZenialCritDB, ZenialCritHistoryDB, ZenialComixDB, ZenialCritSetupDB, ZenialMinimapDB
 ## X-License: MIT

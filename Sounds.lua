@@ -15,6 +15,8 @@ local builtinFiles = {
     fall = "fall.wav", thunder = "thunder.mp3", meme_bonk = "meme_bonk.mp3",
     meme_bowomp = "meme_bowomp.mp3", meme_bruh = "meme_bruh.mp3",
     meme_oof = "meme_oof.mp3",
+    blip = "blip.mp3", coin = "coin.mp3", surprised = "surprised.mp3",
+    unlocked = "unlocked.mp3", victory = "victory.mp3",
     streak_double = "streak_double.mp3", streak_triple = "streak_triple.mp3", streak_ultra = "streak_ultra.mp3",
     streak_mega = "streak_mega.mp3", streak_monster = "streak_monster.mp3",
 }
@@ -33,6 +35,7 @@ local labels = {
     bruh = "Bruh", womp = "Womp-womp", gameover = "Game over", fall = "Falling", thunder = "Thunder",
     meme_bonk = "Bonk (Meme)", meme_bowomp = "Womp (Meme)",
     meme_bruh = "Bruh (Meme)", meme_oof = "Oof (Meme)",
+    blip = "Blip", coin = "Coin", surprised = "Surprised", unlocked = "Unlocked", victory = "Victory",
     critmix = "Crit mix (weighted)", killmix = "Kill mix (weighted)",
     streak_double = "Announcer: Double kill", streak_triple = "Announcer: Triple kill",
     streak_ultra = "Announcer: Ultra kill", streak_mega = "Announcer: Mega kill",
@@ -40,7 +43,7 @@ local labels = {
 }
 -- Only these display names are words; the rest are proper names/onomatopoeia.
 -- Sound IDs and files never change with the locale.
-local translatable = { punch = true, squeak = true, gameover = true, fall = true, thunder = true, critmix = true, killmix = true,
+local translatable = { punch = true, squeak = true, gameover = true, fall = true, thunder = true, coin = true, surprised = true, unlocked = true, victory = true, critmix = true, killmix = true,
     streak_double = true, streak_triple = true, streak_ultra = true, streak_mega = true, streak_monster = true,
     announcer = true }
 local function label(id)
@@ -183,6 +186,7 @@ function S.Catalog(config, env)
     local ordered = {
         "pop", "impact", "arcade", "finisher", "jackpot", "laser", "tada", "doom",
         "bonk", "klong", "punch", "squeak", "bruh", "womp", "gameover", "fall", "thunder",
+        "blip", "coin", "surprised", "unlocked", "victory",
         "meme_bonk", "meme_bowomp", "meme_bruh", "meme_oof", "critmix", "killmix",
         "streak_double", "streak_triple", "streak_ultra", "streak_mega", "streak_monster", "announcer",
     }
