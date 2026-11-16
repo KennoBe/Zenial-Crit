@@ -8,7 +8,7 @@ local frame = api:Frame()
 if not frame then return end
 app.frame = frame
 
-local VERSION = "1.9.1"
+local VERSION = "2.0.0"
 app.version = VERSION
 
 -- Config used before login (damage font): root.last, else "Standard", else a flat legacy table.

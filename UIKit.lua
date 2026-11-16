@@ -168,9 +168,17 @@ function Kit.New(ctx)
             if popup and popup:IsShown() then popup:Hide(); return end
             loadOptions()
             if not popup then
-                popup = api:Frame("Frame", nil, api:Root(), BackdropTemplateMixin and "BackdropTemplate" or nil)
-                popup:SetFrameStrata("TOOLTIP"); popup:SetClampedToScreen(true)
+                -- A transparent catcher below the list: a click anywhere else closes it.
+                local catcher = api:Frame("Frame", nil, api:Root())
+                catcher:SetAllPoints(api:Root()); catcher:SetFrameStrata("TOOLTIP"); catcher:EnableMouse(true)
+                catcher:Hide()
+                popup = api:Frame("Frame", nil, catcher, BackdropTemplateMixin and "BackdropTemplate" or nil)
+                popup:SetFrameStrata("TOOLTIP"); popup:SetFrameLevel(catcher:GetFrameLevel() + 5)
+                popup:SetClampedToScreen(true); popup:EnableMouse(true)
                 if T then T.Panel(popup, "inset") end
+                popup:SetScript("OnHide", function() catcher:Hide() end)
+                catcher:SetScript("OnMouseDown", function() popup:Hide() end)
+                popup.catcher = catcher
                 popup:Hide(); view.popups[#view.popups + 1] = popup
             end
             popup:SetSize(width, #options * 26 + 10)
@@ -190,7 +198,7 @@ function Kit.New(ctx)
             closePopups(popup); popup:ClearAllPoints()
             if placement == "up" then popup:SetPoint("BOTTOMLEFT", main, "TOPLEFT", 0, 3)
             else popup:SetPoint("TOPLEFT", main, "BOTTOMLEFT", 0, -3) end
-            popup:Show()
+            popup.catcher:Show(); popup:Show()
         end
         main = button(parentFrame, "", x, y, width, open)
         if T then T.StyleDropdown(main) end

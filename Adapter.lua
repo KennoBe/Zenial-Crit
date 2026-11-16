@@ -156,6 +156,14 @@ function Adapter.New(env)
         return self:Public(guid) and type(guid) == "string" and guid:sub(1, 7) == "Player-" or false
     end
 
+    -- Class token of the player ("SHAMAN"), or nil when it cannot be read.
+    function A:PlayerClass()
+        if type(env.UnitClass) ~= "function" then return nil end
+        local ok, _, token = pcall(env.UnitClass, "player")
+        if ok and self:Public(token) and type(token) == "string" and token ~= "" then return token end
+        return nil
+    end
+
     function A:SpellName(id)
         if not self:Public(id) or type(id) ~= "number" then return nil end
         local spell = env.C_Spell

@@ -1,9 +1,9 @@
 ## Interface: 16001
 ## Title: Zenial Crit
-## Notes: Critical-hit effects for ZENIAL
-## Notes-deDE: Kritische-Treffer-Effekte für ZENIAL
+## Notes: Effects for crits, kills, kill streaks and procs
+## Notes-deDE: Effekte für Krits, Kills, Kill-Serien und Procs
 ## Author: ZENIAL
-## Version: 1.9.1
+## Version: 2.0.0
 ## IconTexture: Interface\AddOns\ZenialCrit\Media\Icon.tga
 ## SavedVariables: ZenialCritDB, ZenialCritHistoryDB, ZenialComixDB, ZenialCritSetupDB, ZenialMinimapDB
 ## X-License: MIT
@@ -27,6 +27,8 @@ UIPageOverview.lua
 UIPageEvents.lua
 UIPageLook.lua
 UIPageMotion.lua
+UIPageSounds.lua
+UIPageProcs.lua
 UIPageProfiles.lua
 UI2.lua
 ConfigWizard.lua

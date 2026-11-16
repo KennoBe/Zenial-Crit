@@ -12,7 +12,8 @@ UI.Pages = {
     {key = "events", text = "Events", icon = "bell", form = "UIPageEvents"},
     {key = "appearance", text = "Appearance", icon = "layers", form = "UIPageLook"},
     {key = "animations", text = "Animations", icon = "clock", form = "UIPageMotion"},
-    {key = "sounds", text = "Sounds", icon = "note", sounds = true},
+    {key = "sounds", text = "Sounds", icon = "note", form = "UIPageSounds"},
+    {key = "procs", text = "Procs", icon = "star", form = "UIPageProcs"},
     {key = "profiles", text = "Profiles", icon = "characters", form = "UIPageProfiles", noReset = true},
     {key = "history", text = "History", icon = "history", history = true},
 }
@@ -148,6 +149,8 @@ function UI.New(app, parent, embedded)
     ctx.historyHost = api:Frame("Frame", nil, pageHost)
     ctx.historyHost:SetAllPoints(pageHost); ctx.historyHost:Hide()
 
+    view.ctx = ctx
+    NS.UISounds.DefineMethods(ctx)
     local formContext = {app = app, api = api, tr = tr,
         advanced = function() return app.root ~= nil and app.root.advanced == true end}
     for _, spec in ipairs(UI.Pages) do
@@ -164,13 +167,12 @@ function UI.New(app, parent, embedded)
                         onConfirm = function() app:ResetKeys(form:Keys()) end})
                 end}})
             end
-            page.refresh = function() form:Refresh() end
+            page.refresh = function()
+                form:Refresh()
+                if page.afterRefresh then page.afterRefresh() end
+            end
         end
     end
-    NS.UISounds.Define(ctx)
-    NS.UISounds.BuildPage(ctx)
-    view.pages.sounds.refresh = function() view:RefreshSounds() end
-    NS.UISounds.DefineMethods(ctx)
     NS.UIHistory.Build(ctx)
     view.pages.history = {frame = ctx.historyHost, refresh = function() view:RefreshHistory() end}
     NS.UIAnchor.Define(ctx)
@@ -252,6 +254,7 @@ function UI.New(app, parent, embedded)
         for key, page in pairs(self.pages) do
             local region = page.scroll or page.frame
             if region then region:SetShown(key == name) end
+            if key ~= name and page.onHide then page.onHide() end
             if T and self.nav[key] then T.SetSelected(self.nav[key], key == name) end
         end
         self:Refresh()
@@ -279,7 +282,10 @@ function UI.New(app, parent, embedded)
     end
     if not embedded then frame:SetScript("OnShow", function() frame:SetScale(view:FitScale()) end) end
 
-    frame:SetScript("OnHide", function() view:CloseAnchor(); dialog:Hide(); view:ClosePagePopups() end)
+    frame:SetScript("OnHide", function()
+        view:CloseAnchor(); dialog:Hide(); view:ClosePagePopups()
+        for _, page in pairs(view.pages) do if page.onHide then page.onHide() end end
+    end)
     if not embedded then frame:Hide() end
     app.views = app.views or {}; app.views[#app.views + 1] = view
     view:SetPage("overview")

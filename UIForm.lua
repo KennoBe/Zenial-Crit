@@ -618,6 +618,12 @@ function Form:Buttons(list)
         row.entries[index] = { spec = entry, button = button }
     end
     row.control = row.frame
+    row.anyVisible = function()
+        for _, item in ipairs(row.entries) do
+            if not item.spec.visible or item.spec.visible() then return true end
+        end
+        return false
+    end
     row.update = function()
         local x = 0
         for _, item in ipairs(row.entries) do
@@ -680,6 +686,8 @@ local function rowVisible(self, row)
     if spec.advanced and not (self.ctx.advanced and self.ctx.advanced()) then return false end
     if spec.visible and not spec.visible() then return false end
     if row.kind == "Note" and resolve(self, spec.text) == "" then return false end
+    -- A row of buttons without a visible button takes no space.
+    if row.kind == "Buttons" and row.anyVisible and not row.anyVisible() then return false end
     return true
 end
 

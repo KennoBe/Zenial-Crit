@@ -20,9 +20,12 @@ function Page.Build(view, form)
     form:Segment({key = "displayMode", label = "Crit and kill text",
         desc = "Kill streaks, procs and heal crits always use the fixed position.",
         options = {{"nameplate", "Over the nameplate"}, {"fixed", "Fixed position"}}})
-    form:Slider({label = "Size", keys = {"scale", "nameplateScale"}, min = .6, step = .05, format = "%.2f",
-        key = function() return app.db.displayMode == "nameplate" and "nameplateScale" or "scale" end,
-        max = function() return app.db.displayMode == "nameplate" and 4.2 or 2.5 end})
+    -- Over the nameplate the fixed size still counts for heal crits, streaks and procs.
+    form:Slider({key = "nameplateScale", label = "Size over the nameplate", min = .6, max = 4.2, step = .05, format = "%.2f",
+        visible = function() return app.db.displayMode == "nameplate" end})
+    form:Slider({key = "scale", min = .6, max = 2.5, step = .05, format = "%.2f", label = function()
+        return app.db.displayMode == "nameplate" and "Size at the fixed position" or "Size"
+    end})
     form:Buttons({{text = "Move position", onClick = function() view:Anchor("shared") end,
         visible = function() return app.db.separatePositions ~= true end}})
     form:Note({text = function()
@@ -30,7 +33,11 @@ function Page.Build(view, form)
     end})
 
     form:Card("Setup")
-    form:Buttons({{text = "Run the setup wizard", onClick = function() NS.Setup.Open() end}})
+    form:Buttons({{text = "Run the setup wizard", onClick = function()
+        -- Like /zcrit config: the settings window gives way to the assistant.
+        if app.ui and app.ui.frame then app.ui.frame:Hide() end
+        NS.Setup.Open()
+    end}})
     form:Note({tone = "warning", text = function()
         return app.eventState and app.eventState.unitCombat == "failed" and "Crits cannot be recognized in this game version." or ""
     end})
