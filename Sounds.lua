@@ -12,7 +12,7 @@ local builtinFiles = {
     tada = "tada.wav", doom = "doom.wav", bonk = "bonk.wav",
     klong = "klong.wav", punch = "punch.wav", squeak = "squeak.wav",
     bruh = "bruh.wav", womp = "womp.wav", gameover = "gameover.wav",
-    fall = "fall.wav", meme_bonk = "meme_bonk.mp3",
+    fall = "fall.wav", thunder = "thunder.wav", meme_bonk = "meme_bonk.mp3",
     meme_bowomp = "meme_bowomp.mp3", meme_bruh = "meme_bruh.mp3",
     meme_oof = "meme_oof.mp3",
     streak_double = "streak_double.mp3", streak_triple = "streak_triple.mp3", streak_ultra = "streak_ultra.mp3",
@@ -30,7 +30,7 @@ local labels = {
     pop = "Pop", impact = "Impact", arcade = "Arcade", finisher = "Finisher",
     jackpot = "Jackpot", laser = "Laser", tada = "Ta-da!", doom = "Doom",
     bonk = "Bonk", klong = "Klong", punch = "Comic hit", squeak = "Squeak",
-    bruh = "Bruh", womp = "Womp-womp", gameover = "Game over", fall = "Falling",
+    bruh = "Bruh", womp = "Womp-womp", gameover = "Game over", fall = "Falling", thunder = "Thunder",
     meme_bonk = "Bonk (Meme)", meme_bowomp = "Womp (Meme)",
     meme_bruh = "Bruh (Meme)", meme_oof = "Oof (Meme)",
     critmix = "Crit mix (weighted)", killmix = "Kill mix (weighted)",
@@ -40,7 +40,7 @@ local labels = {
 }
 -- Only these display names are words; the rest are proper names/onomatopoeia.
 -- Sound IDs and files never change with the locale.
-local translatable = { punch = true, squeak = true, gameover = true, fall = true, critmix = true, killmix = true,
+local translatable = { punch = true, squeak = true, gameover = true, fall = true, thunder = true, critmix = true, killmix = true,
     streak_double = true, streak_triple = true, streak_ultra = true, streak_mega = true, streak_monster = true,
     announcer = true }
 local function label(id)
@@ -68,6 +68,7 @@ local categoryKeys = {
     healLow = { mode = "healLowSoundMode", ids = "healLowSoundIDs" },
     streak = { mode = "streakSoundMode", ids = "streakSoundIDs" },
     proc = { mode = "procSoundMode", ids = "procSoundIDs" },
+    windfury = { mode = "windfurySoundMode", ids = "windfurySoundIDs" },
 }
 S.CategoryKeys = categoryKeys
 
@@ -181,7 +182,7 @@ function S.Catalog(config, env)
     local result = {}
     local ordered = {
         "pop", "impact", "arcade", "finisher", "jackpot", "laser", "tada", "doom",
-        "bonk", "klong", "punch", "squeak", "bruh", "womp", "gameover", "fall",
+        "bonk", "klong", "punch", "squeak", "bruh", "womp", "gameover", "fall", "thunder",
         "meme_bonk", "meme_bowomp", "meme_bruh", "meme_oof", "critmix", "killmix",
         "streak_double", "streak_triple", "streak_ultra", "streak_mega", "streak_monster", "announcer",
     }

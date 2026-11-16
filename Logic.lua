@@ -12,7 +12,7 @@ for _, preset in ipairs(killChoices) do killChoiceSet[preset] = true end
 for _, style in ipairs(fontStyles) do fontStyleSet[style] = true end
 
 local defaults = {
-    schema = 16,
+    schema = 17,
     critGraphics = true, critSound = true,
     healSound = true,
     killGraphics = true, killSound = true,
@@ -59,6 +59,10 @@ local defaults = {
     situationWorld = "all", situationDungeon = "all", situationRaid = "all", situationPvp = "all",
     streakWindow = 8, streakTargets = "all", streakEscalate = true, streakHideKill = true,
     procTriggers = {},
+    -- Schema 17: Windfury of the weapon and of the totem.
+    procWindfuryWeapon = true, procWindfuryTotem = true, procWindfuryFlash = true,
+    procWindfuryWeaponText = "WINDFURY!", procWindfuryTotemText = "WINDFURY TOTEM!",
+    windfurySoundMode = "single", windfurySoundIDs = {"thunder"}, windfurySoundChannel = "Master",
 }
 local bounds = {
     scale = {.6, 2.5}, nameplateScale = {.6, 4.2}, intensity = {1, 3}, soundCooldown = {0, 30},
@@ -333,6 +337,8 @@ function L.Sanitize(input)
                 result[key] = L.SanitizeTexts(texts, textKinds[key])
             elseif key == "procTriggers" then
                 result[key] = sanitizeProcTriggers(input[key])
+            elseif key == "procWindfuryWeaponText" or key == "procWindfuryTotemText" then
+                result[key] = cleanLine(input[key], TEXT_LIMIT) or default
             elseif colorKeys[key] then
                 result[key] = sanitizeColor(input[key], default)
             elseif key:match("Font$") then
@@ -384,7 +390,7 @@ function L.Sanitize(input)
     local soundFallbacks = {
         crit = legacyCrit, heal = "tada", kill = legacyKill,
         record = "jackpot", healRecord = "jackpot", low = "womp", healLow = "womp",
-        streak = "announcer", proc = "laser",
+        streak = "announcer", proc = "laser", windfury = "thunder",
     }
     for category, keys in pairs(NS.Sounds.CategoryKeys) do
         local mode = input[keys.mode]
@@ -487,7 +493,7 @@ local channelKeys = {
     crit="critSoundChannel", heal="healSoundChannel", kill="killSoundChannel",
     record="recordSoundChannel", healRecord="healRecordSoundChannel",
     low="lowSoundChannel", healLow="healLowSoundChannel",
-    streak="streakSoundChannel", proc="procSoundChannel",
+    streak="streakSoundChannel", proc="procSoundChannel", windfury="windfurySoundChannel",
 }
 function L.SoundChannel(config, category)
     local value = config[channelKeys[category] or "critSoundChannel"]
@@ -754,10 +760,16 @@ end
 
 -- Which events the current configuration needs. historyEnabled keeps UNIT_COMBAT alive
 -- for the history even when every output is off.
-function L.Needs(config, historyEnabled, capture)
+-- cooldown/swing carry the built-in procs (Windfury) and the test of the spell recording; spellcast also
+-- carries Stormstrike (anchor of the weapon) and the own totem casts (guard of the totem).
+function L.Needs(config, historyEnabled, capture, class)
     local history = historyEnabled == true
     local capturing = capture == true
-    if config.enabled == false then return {unitCombat = history, partyKill = false, spellcast = capturing} end
+    if config.enabled == false then
+        return {unitCombat = history, partyKill = false, spellcast = capturing, cooldown = capturing, swing = capturing}
+    end
+    local watchWeapon, watchTotem = NS.Procs.Watches(class, config)
+    local watching = watchWeapon or watchTotem
     local chat = config.chatEnabled == true
     local unitCombat = history or config.critGraphics == true or config.critSound == true
         or config.recordSoundEnabled == true or config.lowCritEnabled == true
@@ -768,6 +780,8 @@ function L.Needs(config, historyEnabled, capture)
     local partyKill = config.killGraphics == true or config.killSound == true
         or config.streakGraphics == true or config.streakSound == true
         or (chat and config.chatKill == true)
-    local spellcast = capturing or (L.HasProcTriggers(config) and (config.procGraphics == true or config.procSound == true))
-    return {unitCombat = unitCombat, partyKill = partyKill, spellcast = spellcast}
+    local spellcast = capturing or watching
+        or (L.HasProcTriggers(config) and (config.procGraphics == true or config.procSound == true))
+    return {unitCombat = unitCombat, partyKill = partyKill, spellcast = spellcast,
+        cooldown = capturing or watching, swing = capturing or watching}
 end

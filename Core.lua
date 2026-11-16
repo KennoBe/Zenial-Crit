@@ -1,8 +1,11 @@
 local _, NS = ...
 local api = NS.Adapter.New(_G)
 local app = {api = api, state = NS.Logic.NewState(), initialized = false, killRegistered = false, critRegistered = false,
-    spellcastRegistered = false, eventState = {unitCombat = "off", partyKill = "off", spellcast = "off"},
+    spellcastRegistered = false, cooldownRegistered = false, swingRegistered = false, syncPending = false,
+    eventState = {unitCombat = "off", partyKill = "off", spellcast = "off", cooldown = "off", swing = "off"},
     situation = "world", procSeen = {}, views = {}, sessionRecords = {},
+    procState = NS.Procs.NewState(), watchWeapon = false, watchTotem = false,
+    -- spellLog.test exists only while the recording runs (Windfury test, see BeginTest).
     spellLog = {active = false, list = {}}}
 NS.App = app
 local frame = api:Frame()
@@ -128,11 +131,21 @@ function app:SetHistoryEnabled(enabled)
     if self.initialized then self:SyncEvents() end
 end
 
-local SPELL_LOG_MAX = 8
+local SPELL_LOG_MAX, COOLDOWN_STEP, TIMELINE_MAX, TEST_SPELLS = 12, 0.1, 60, 12
+local REJECTED_KEY = {no_swing = "noSwing", too_soon = "tooSoon", own_cast = "ownCast", off = "off"}
+local STORMSTRIKE = NS.Procs.STORMSTRIKE
 
--- Session-only list of the spells the player casts, so a trigger needs no spell ID typed in.
+local function round3(value) return math.floor(value * 1000 + .5) / 1000 end
+
+local function familyCounters() return {events = 0, procs = 0, noSwing = 0, tooSoon = 0, ownCast = 0, off = 0} end
+
+-- Session-only list of the spells the player casts, so a trigger needs no spell ID typed in. While it runs
+-- it is also the Windfury test: it counts swings and proc candidates and writes a report when it ends.
 function app:SetSpellCapture(enabled)
-    self.spellLog.active = enabled == true
+    enabled = enabled == true
+    if self.spellLog.active and not enabled then self:FinishTest() end
+    self.spellLog.active = enabled
+    if enabled then self:BeginTest() end
     if self.initialized then self:SyncEvents() end
     for _, view in ipairs(self.views) do view:Refresh() end
 end
@@ -141,12 +154,95 @@ function app:ClearSpellLog()
     self.spellLog.list = {}
 end
 
-local eventNames = {unitCombat = "UNIT_COMBAT", partyKill = "PARTY_KILL", spellcast = "UNIT_SPELLCAST_SUCCEEDED"}
+-- The test starts when the events can be registered, never in combat (see SyncEvents).
+function app:BeginTest()
+    local log = self.spellLog
+    if log.test or not log.active or api:InCombat() then return false end
+    log.test = {startedAt = api:Time() or 0, swings = 0, unreadableCasts = 0, unreadableCooldowns = 0,
+        weapon = familyCounters(), totem = familyCounters(), timeline = {}, entries = 0, pending = {}, seenCast = {}}
+    self.procState = NS.Procs.NewState()
+    return true
+end
 
--- Registers only the events the current configuration needs.
+function app:TimelineAdd(now, event, id)
+    local test = self.spellLog.test
+    local entry = {t = round3(math.max(0, now - test.startedAt)), e = event, id = id}
+    test.entries = test.entries + 1
+    test.timeline[(test.entries - 1) % TIMELINE_MAX + 1] = entry
+    return entry
+end
+
+-- The timeline in the order of the events (the buffer keeps the last 60).
+function app:TestTimeline()
+    local test, list = self.spellLog.test, {}
+    if not test then return list end
+    local count = math.min(test.entries, TIMELINE_MAX)
+    local first = test.entries > TIMELINE_MAX and test.entries % TIMELINE_MAX or 0
+    for index = 0, count - 1 do list[#list + 1] = test.timeline[(first + index) % TIMELINE_MAX + 1] end
+    return list
+end
+
+local function copyCounters(source)
+    local result = {}
+    for key, value in pairs(source) do result[key] = value end
+    return result
+end
+
+local function rejectedCount(counters) return counters.noSwing + counters.tooSoon + counters.ownCast end
+
+-- Ends the test: waiting candidates are closed, the report goes to the saved root and one line to the chat.
+function app:FinishTest()
+    local log = self.spellLog
+    local test = log.test
+    if not test then return false end
+    local now = api:Time() or test.startedAt
+    local family, result, reason, lag = NS.Procs.Settle(self.procState)
+    while family do
+        self:ProcDecision(family, result, reason, lag, nil, now)
+        family, result, reason, lag = NS.Procs.Drain(self.procState)
+    end
+    local spells = {}
+    for index = 1, math.min(#log.list, TEST_SPELLS) do
+        local entry = log.list[index]
+        spells[index] = {id = entry.id, casts = entry.casts, cooldowns = entry.cooldowns}
+    end
+    local report = {
+        at = api:Epoch() or 0, version = VERSION, class = self.playerClass or "",
+        seconds = round3(math.max(0, now - test.startedAt)),
+        counters = {swings = test.swings, unreadableCasts = test.unreadableCasts,
+            unreadableCooldowns = test.unreadableCooldowns,
+            weapon = copyCounters(test.weapon), totem = copyCounters(test.totem)},
+        spells = spells, timeline = self:TestTimeline(),
+    }
+    log.test = nil
+    if self.root then
+        self.root.procTest = NS.Profiles.SanitizeProcTest(report)
+        ZenialCritDB = self.root
+    end
+    local available = NS.Procs.Available(self.playerClass)
+    if available.weapon or available.totem then
+        api:Chat(string.format(NS.Locale.Text("|cff00e5ff[ZenialCrit]|r Windfury test: %d swings, weapon %d procs, %d rejected, totem %d procs, %d rejected. Type /reload to save it."),
+            test.swings, test.weapon.procs, rejectedCount(test.weapon), test.totem.procs, rejectedCount(test.totem)))
+    end
+    return true
+end
+
+local eventNames = {unitCombat = "UNIT_COMBAT", partyKill = "PARTY_KILL", spellcast = "UNIT_SPELLCAST_SUCCEEDED",
+    cooldown = "SPELL_UPDATE_COOLDOWN", swing = "PLAYER_SWING"}
+
+-- Registers only the events the current configuration needs. Never in combat: the change is kept
+-- and made up for at PLAYER_REGEN_ENABLED (the handlers check the configuration themselves).
 function app:SyncEvents()
     if not self.db then return end
-    local needs = NS.Logic.Needs(self.db, self.history and self.history.enabled == true, self.spellLog.active)
+    self.playerClass = self.playerClass or api:PlayerClass()
+    self.watchWeapon, self.watchTotem = NS.Procs.Watches(self.playerClass, self.db)
+    if api:InCombat() then
+        self.syncPending = true
+        return self.eventState
+    end
+    self.syncPending = false
+    self:BeginTest()
+    local needs = NS.Logic.Needs(self.db, self.history and self.history.enabled == true, self.spellLog.active, self.playerClass)
     local function sync(name, flag, register)
         if needs[name] then
             if not self[flag] then self[flag] = register() end
@@ -166,6 +262,8 @@ function app:SyncEvents()
     sync("spellcast", "spellcastRegistered", function()
         return (api:RegisterUnit(frame, "UNIT_SPELLCAST_SUCCEEDED", "player"))
     end)
+    sync("cooldown", "cooldownRegistered", function() return api:Register(frame, "SPELL_UPDATE_COOLDOWN") end)
+    sync("swing", "swingRegistered", function() return api:Register(frame, "PLAYER_SWING") end)
     return self.eventState
 end
 
@@ -249,6 +347,8 @@ function app:Preview(kind, tier)
             if item.enabled ~= false then text = item.text; break end
         end
         opts = {text = text}
+    elseif kind == "windfury" or kind == "windfuryTotem" then
+        return self:FireWindfury(kind == "windfury" and "weapon" or "totem", true)
     end
     return self:Trigger(kind, true, kind, nil, opts)
 end
@@ -332,27 +432,131 @@ function app:HandleKill(attackerGUID, victimGUID)
     return self:Trigger("kill", false, killSound, victimGUID, killOpts)
 end
 
--- Newest first, one entry per spell, at most SPELL_LOG_MAX spells (the one cast longest ago drops out).
-function app:LogSpell(spellID, now)
+-- Newest first, one entry per spell, at most SPELL_LOG_MAX spells (the one seen longest ago drops out).
+-- kind "cast" counts a cast; kind "cd" a cooldown event, at most once per COOLDOWN_STEP and spell.
+function app:LogSpell(spellID, now, kind)
     local list = self.spellLog.list
-    local entry
-    for index = 1, #list do
-        if list[index].id == spellID then entry = table.remove(list, index) break end
+    local index
+    for position = 1, #list do
+        if list[position].id == spellID then index = position break end
     end
-    if entry then
-        entry.count, entry.at = entry.count + 1, now
+    local entry = index and list[index]
+    if entry and kind == "cd" and entry.cdAt and now >= entry.cdAt and now - entry.cdAt < COOLDOWN_STEP then return end
+    if entry then table.remove(list, index) else entry = {id = spellID, casts = 0, cooldowns = 0, at = now} end
+    entry.at = now
+    if kind == "cast" then
+        entry.casts = entry.casts + 1
     else
-        entry = {id = spellID, count = 1, at = now}
+        entry.cooldowns, entry.cdAt = entry.cooldowns + 1, now
     end
     table.insert(list, 1, entry)
     while #list > SPELL_LOG_MAX do table.remove(list) end
 end
 
+-- Weapon and totem families: one decision of Procs becomes a count (test), a timeline entry (test) and,
+-- for a proc of a watched family, the effect. entry is the timeline entry of the event itself; a candidate
+-- that waited for its swing is found through test.pending.
+function app:ProcDecision(family, result, reason, lag, entry, now)
+    local test = self.spellLog.test
+    if test then
+        local counters = test[family]
+        if result == "proc" then
+            counters.procs = counters.procs + 1
+        elseif result == "rejected" and REJECTED_KEY[reason] then
+            counters[REJECTED_KEY[reason]] = counters[REJECTED_KEY[reason]] + 1
+        end
+        if result == "waiting" then
+            if entry then entry.r, test.pending[family] = "waiting", entry end
+        else
+            local target = entry or test.pending[family]
+            if target then
+                target.r = result == "proc" and "proc" or reason
+                target.lag = lag and round3(lag) or nil
+            end
+            if not entry then test.pending[family] = nil end
+        end
+    end
+    if result ~= "proc" then return false end
+    local watched
+    if family == "weapon" then watched = self.watchWeapon else watched = self.watchTotem end
+    if not watched then return false end
+    return self:FireWindfury(family)
+end
+
+-- Settled candidates first (they belong to earlier events), then the decision of the current call.
+function app:ProcResults(now, entry, family, result, reason, lag)
+    local staleFamily, staleResult, staleReason, staleLag = NS.Procs.Drain(self.procState)
+    while staleFamily do
+        self:ProcDecision(staleFamily, staleResult, staleReason, staleLag, nil, now)
+        staleFamily, staleResult, staleReason, staleLag = NS.Procs.Drain(self.procState)
+    end
+    if family then self:ProcDecision(family, result, reason, lag, entry, now) end
+end
+
+function app:HandleCooldown(spellID)
+    local test = self.spellLog.test
+    if not api:Public(spellID) or type(spellID) ~= "number" then
+        if test then test.unreadableCooldowns = test.unreadableCooldowns + 1 end
+        return false
+    end
+    local family = NS.Procs.Family[spellID]
+    if not family and not test then return false end
+    local now = api:Time()
+    if not now then return false end
+    if not test then
+        local fam, result, reason, lag = NS.Procs.OnCooldown(self.procState, now, spellID, self.watchWeapon, self.watchTotem)
+        self:ProcResults(now, nil, fam, result, reason, lag)
+        return fam ~= nil
+    end
+    self:LogSpell(spellID, now, "cd")
+    if family then
+        local counters = test[family]
+        counters.events = counters.events + 1
+        local watched
+        if family == "weapon" then watched = self.watchWeapon else watched = self.watchTotem end
+        if not watched then counters.off = counters.off + 1 end
+        -- The test always evaluates both families; without the switch the proc only stays a count.
+        local fam, result, reason, lag = NS.Procs.OnCooldown(self.procState, now, spellID, true, true)
+        self:ProcResults(now, self:TimelineAdd(now, "cd", spellID), fam, result, reason, lag)
+    elseif not test.seenCast[spellID] then
+        -- Never cast in this recording: a possible proc.
+        self:TimelineAdd(now, "cd", spellID)
+    end
+    return family ~= nil
+end
+
+function app:HandleSwing(_, hand)
+    if not api:Public(hand) or type(hand) ~= "number" then return false end
+    local test = self.spellLog.test
+    if not test and (hand ~= 0 or (not self.watchWeapon and not self.watchTotem)) then return false end
+    local now = api:Time()
+    if not now then return false end
+    if test and hand == 0 then
+        test.swings = test.swings + 1
+        self:TimelineAdd(now, "swing")
+    end
+    local family, result, reason, lag = NS.Procs.OnSwing(self.procState, now, hand)
+    self:ProcResults(now, nil, family, result, reason, lag)
+    return true
+end
+
 function app:HandleSpellcast(unit, _, spellID)
     if not api:Public(unit) or unit ~= "player" then return false end
-    if not api:Public(spellID) or type(spellID) ~= "number" then return false end
+    local test = self.spellLog.test
+    if not api:Public(spellID) or type(spellID) ~= "number" then
+        if test then test.unreadableCasts = test.unreadableCasts + 1 end
+        return false
+    end
     local now = api:Time()
-    if self.spellLog.active then self:LogSpell(spellID, now or 0) end
+    if test then
+        self:LogSpell(spellID, now or 0, "cast")
+        test.seenCast[spellID] = true
+        if spellID == STORMSTRIKE then self:TimelineAdd(now or test.startedAt, "cast", spellID) end
+    end
+    if now and (test or self.watchWeapon or self.watchTotem) then
+        local family, result, reason, lag = NS.Procs.OnCast(self.procState, now, spellID)
+        self:ProcResults(now, nil, family, result, reason, lag)
+    end
     local trigger = NS.Logic.ProcMatch(self.db, spellID)
     if not trigger then return false end
     if not now then return false end
@@ -361,6 +565,15 @@ function app:HandleSpellcast(unit, _, spellID)
     self.procSeen[spellID] = now
     if not self:Allowed("proc") then return false end
     return self:Trigger("proc", false, NS.Logic.SoundCategory(self.db, nil, "proc"), nil, {text = trigger.text})
+end
+
+-- Windfury of the weapon or of the totem; the text and the screen flash are their own settings.
+function app:FireWindfury(family, preview)
+    local db = self.db
+    if not preview and not self:Allowed("proc") then return false end
+    local text = family == "totem" and db.procWindfuryTotemText or db.procWindfuryWeaponText
+    local category = (preview or db.procSound) and "windfury" or nil
+    return self:Trigger("proc", preview == true, category, nil, {text = text, flash = db.procWindfuryFlash == true})
 end
 
 function app:HandleObserved(kind, unit, amount, school)
@@ -433,6 +646,7 @@ function app:Init()
     self:EnsureCharacter()
     self.profile, self.db = NS.Profiles.Resolve(self.root, self.characterKey)
     self.root.last = self.profile
+    self.playerClass = api:PlayerClass()
     self:UpdateSituation()
     api:ApplyDamageFont(self.db.critFont)
     ZenialComixDB = nil
@@ -456,6 +670,8 @@ function app:Init()
             self:Preview("streak", tonumber(streakTier))
         elseif command == "proc" then
             self:Preview("proc")
+        elseif command == "windfury" then
+            self:Preview("windfury")
         elseif command == "config" then
             NS.Setup.Open()
         else
@@ -476,6 +692,10 @@ end
 frame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
         app:Init()
+    elseif event == "SPELL_UPDATE_COOLDOWN" then
+        if app.initialized then app:HandleCooldown(...) end
+    elseif event == "PLAYER_SWING" then
+        if app.initialized then app:HandleSwing(...) end
     elseif event == "PARTY_KILL" and app.initialized then
         app:HandleKill(...)
     elseif event == "UNIT_COMBAT" and app.initialized then
@@ -486,6 +706,13 @@ frame:SetScript("OnEvent", function(_, event, ...)
         app:HandleSpellcast(...)
     elseif (event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA") and app.initialized then
         app:UpdateSituation()
+        -- The class can be unreadable at login; it is read again once the world is there.
+        if not app.playerClass and api:PlayerClass() then app:SyncEvents() end
+    elseif event == "PLAYER_REGEN_ENABLED" and app.initialized then
+        if app.syncPending then
+            app:SyncEvents()
+            for _, view in ipairs(app.views) do view:Refresh() end
+        end
     elseif event == "ADDON_LOADED" then
         local name = ...
         if name == "ZenialCrit" then api:ApplyDamageFont(savedConfig().critFont) end
@@ -498,6 +725,7 @@ api:Register(frame, "PLAYER_LOGIN")
 api:Register(frame, "ADDON_LOADED")
 api:Register(frame, "PLAYER_ENTERING_WORLD")
 api:Register(frame, "ZONE_CHANGED_NEW_AREA")
+api:Register(frame, "PLAYER_REGEN_ENABLED")
 
 _G.ZenialAddonPanels = _G.ZenialAddonPanels or {}
 _G.ZenialAddonPanels.ZenialCrit = {

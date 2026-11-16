@@ -210,6 +210,11 @@ function UI.New(app, parent, embedded)
             options[#options + 1] = {"streak" .. index, string.format(tr("Kill streak: %s"), texts[index])}
         end
         options[#options + 1] = {"proc", tr("Proc")}
+        -- Windfury only for a class that can have it: the weapon first, else the totem.
+        local windfury = NS.Procs.Available(app.playerClass)
+        if windfury.weapon or windfury.totem then
+            options[#options + 1] = {windfury.weapon and "windfury" or "windfuryTotem", tr("Windfury")}
+        end
         return options
     end
     local function normalizePreviewKey()

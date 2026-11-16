@@ -6,11 +6,11 @@ NS.UIPageSounds = Page
 local CHANNEL_KEYS = {
     crit = "critSoundChannel", heal = "healSoundChannel", kill = "killSoundChannel", record = "recordSoundChannel",
     healRecord = "healRecordSoundChannel", low = "lowSoundChannel", healLow = "healLowSoundChannel",
-    streak = "streakSoundChannel", proc = "procSoundChannel",
+    streak = "streakSoundChannel", proc = "procSoundChannel", windfury = "windfurySoundChannel",
 }
 -- The setting that switches the event of a sound category on.
 local ENABLE_KEYS = {
-    crit = "critSound", heal = "healSound", kill = "killSound", streak = "streakSound", proc = "procSound",
+    crit = "critSound", heal = "healSound", kill = "killSound", streak = "streakSound", proc = "procSound", windfury = "procSound",
     record = "recordSoundEnabled", healRecord = "healRecordSoundEnabled", low = "lowCritEnabled", healLow = "healLowEnabled",
 }
 Page.ChannelKeys, Page.EnableKeys = CHANNEL_KEYS, ENABLE_KEYS

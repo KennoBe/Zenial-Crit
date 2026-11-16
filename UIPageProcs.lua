@@ -189,7 +189,9 @@ function Page.Build(view, form)
             else app:ClearSpellLog(); app:SetSpellCapture(true) end
         end}})
     form:Note({text = "Turn this on, fight for a moment and pick the spell below. You need no ID."})
-    form:Note({text = function() return spellLog.active and #spellLog.list == 0 and "Nothing cast yet." or "" end})
+    -- Started in combat: the events are registered after the fight.
+    form:Note({text = function() return spellLog.active and not spellLog.test and "Starts after the fight." or "" end})
+    form:Note({text = function() return spellLog.test and #spellLog.list == 0 and "Nothing cast yet." or "" end})
     local spellRows = {}
     view.procSpellRows = spellRows
     local spellList = form:Custom({visible = function() return #spellLog.list > 0 end,
@@ -212,28 +214,56 @@ function Page.Build(view, form)
                 rf.index, rf.spellID = index, entry.id
                 rf:ClearAllPoints(); rf:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(index - 1) * ROW)
                 rf.name:SetText(api:SpellName(entry.id) or tr("Unknown spell"))
-                rf.info:SetText(string.format("ID %d \194\183 \195\151%d", entry.id, entry.count))
+                -- An entry that was never cast is a possible proc: a trigger works for cast spells only.
+                local cast = (entry.casts or 0) > 0
+                if cast then
+                    rf.info:SetText(string.format("ID %d \194\183 \195\151%d", entry.id, entry.casts))
+                else
+                    rf.info:SetText(string.format(tr("ID %d \194\183 \195\151%d \194\183 no cast"), entry.id, entry.cooldowns or 0))
+                end
                 if T then T.Tint(rf.info, "SetTextColor", "dim") end
-                local taken = used(entry.id)
+                local taken = cast and used(entry.id)
                 rf.use:SetText(taken and tr("Already a trigger") or tr("Use"))
-                rf.use:SetEnabled(not taken and #ensure() < MAX_TRIGGERS)
+                rf.use:SetEnabled(cast and not taken and #ensure() < MAX_TRIGGERS)
+                rf.use:SetShown(cast)
                 rf:Show()
             end
             for index = #spellLog.list + 1, #spellRows do spellRows[index]:Hide() end
         end})
     view.procSpellList = spellList
     form:Note({text = function()
-        return #spellLog.list > 0 and "A proc that shows up here as its own entry can be used as a trigger." or ""
+        return #spellLog.list > 0 and "Entries without a cast are possible procs. They help to find out what can be recognized." or ""
     end})
     form:Toggle({key = "procGraphics", label = "Show text"})
     form:Toggle({key = "procSound", label = "Play sound"})
 
+    -- Windfury: only the families the class can have are shown.
+    local function available() return NS.Procs.Available(app.playerClass or api:PlayerClass()) end
+    local function any() local a = available(); return a.weapon or a.totem end
+    local function db() return app.db end
     form:Card("Class procs")
+    form:Note({text = function() return any() and "" or "No proc of your class can be recognized yet." end})
+    form:Toggle({key = "procWindfuryWeapon", label = "Windfury of the weapon", visible = function() return available().weapon end})
+    form:Input({key = "procWindfuryWeaponText", label = "Text", maxLetters = MAX_TEXT, width = 260,
+        visible = function() return available().weapon and db().procWindfuryWeapon == true end})
+    form:Toggle({key = "procWindfuryTotem", label = "Windfury Totem", visible = function() return available().totem end})
+    form:Input({key = "procWindfuryTotemText", label = "Text", maxLetters = MAX_TEXT, width = 260,
+        visible = function() return available().totem and db().procWindfuryTotem == true end})
+    form:Toggle({key = "procWindfuryFlash", label = "Screen flash on Windfury", visible = any})
+    form:Buttons({{text = "Preview", visible = any, onClick = function()
+        app:Preview(available().weapon and "windfury" or "windfuryTotem")
+    end}})
     form:Note({text = function()
-        if api:PlayerClass() == "SHAMAN" then
-            return "Windfury cannot be recognized reliably yet. Record your spells above while you fight with Windfury: if it shows up as its own entry, it can be used."
-        end
-        return "No proc of your class can be recognized reliably yet."
+        return any() and "Windfury is not confirmed in the game yet. Record your spells above for a minute of fighting, stop and type /reload." or ""
+    end})
+    form:Note({text = function()
+        local test = app.root and app.root.procTest
+        local counters = type(test) == "table" and test.counters
+        if not any() or type(counters) ~= "table" or type(counters.weapon) ~= "table" or type(counters.totem) ~= "table" then return "" end
+        local function rejected(c) return (c.noSwing or 0) + (c.tooSoon or 0) + (c.ownCast or 0) end
+        return "Last test: %d swings, weapon %d procs and %d rejected, totem %d procs and %d rejected.",
+            counters.swings or 0, counters.weapon.procs or 0, rejected(counters.weapon),
+            counters.totem.procs or 0, rejected(counters.totem)
     end})
 
     form:Card("Recording")

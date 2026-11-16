@@ -10,7 +10,7 @@ NS.UISounds = Sounds
 Sounds.Categories = {
     {"crit", "Crit"}, {"record", "Crit record"}, {"low", "Weak crit"},
     {"heal", "Heal crit"}, {"healRecord", "Heal record"}, {"healLow", "Weak heal crit"},
-    {"kill", "Kill"}, {"streak", "Kill streak"}, {"proc", "Proc"},
+    {"kill", "Kill"}, {"streak", "Kill streak"}, {"proc", "Proc"}, {"windfury", "Windfury"},
 }
 local categoryLabels = {}
 for _, entry in ipairs(Sounds.Categories) do categoryLabels[entry[1]] = entry[2] end

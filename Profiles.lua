@@ -57,6 +57,60 @@ local function fallbackName(root)
     return names[1]
 end
 
+-- Report of the last Windfury test (account-wide, written when the recording of spells ends). Bounded:
+-- numbers, booleans and short strings only; everything else is dropped.
+local TEST_TIMELINE, TEST_SPELLS, TEST_STRING, TEST_KEYS = 60, 12, 24, 16
+
+local function testScalar(value)
+    local kind = type(value)
+    if kind == "number" then
+        if value == value and value > -1e12 and value < 1e12 then return value end
+    elseif kind == "boolean" then
+        return value
+    elseif kind == "string" then
+        if #value <= TEST_STRING then return value end
+    end
+    return nil
+end
+
+-- One flat table of scalars; `nested` names keys that hold one more flat table.
+local function testFlat(input, nested)
+    if type(input) ~= "table" then return nil end
+    local result, count = {}, 0
+    for key, value in pairs(input) do
+        if type(key) == "string" and #key <= TEST_STRING and count < TEST_KEYS then
+            if nested and nested[key] then
+                local inner = testFlat(value)
+                if inner then result[key] = inner; count = count + 1 end
+            else
+                local scalar = testScalar(value)
+                if scalar ~= nil then result[key] = scalar; count = count + 1 end
+            end
+        end
+    end
+    return result
+end
+
+local function testList(input, limit)
+    local result = {}
+    if type(input) ~= "table" then return result end
+    for index = 1, math.min(#input, limit) do
+        local item = testFlat(input[index])
+        if item then result[#result + 1] = item end
+    end
+    return result
+end
+
+function P.SanitizeProcTest(input)
+    if type(input) ~= "table" then return nil end
+    local result = testFlat(input) or {}
+    local counters = type(input.counters) == "table" and testFlat(input.counters, {weapon = true, totem = true}) or {}
+    result.counters = counters
+    result.spells = testList(input.spells, TEST_SPELLS)
+    result.timeline = testList(input.timeline, TEST_TIMELINE)
+    return result
+end
+
 function P.SanitizeRoot(input)
     local profiles = {}
     local source = type(input) == "table" and input or {}
@@ -87,7 +141,8 @@ function P.SanitizeRoot(input)
         profiles[DEFAULT_NAME] = NS.Logic.Sanitize(source)
     end
     if next(profiles) == nil then profiles[DEFAULT_NAME] = NS.Logic.Sanitize({}) end
-    local root = {schema = SCHEMA, profiles = profiles, chars = {}, advanced = source.advanced == true}
+    local root = {schema = SCHEMA, profiles = profiles, chars = {}, advanced = source.advanced == true,
+        procTest = P.SanitizeProcTest(source.procTest)}
     local rawChars, count = type(source.chars) == "table" and source.chars or {}, 0
     local keys = {}
     for key, value in pairs(rawChars) do

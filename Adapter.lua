@@ -152,6 +152,13 @@ function Adapter.New(env)
         if ok and self:Public(instanceType) and type(instanceType) == "string" then return instanceType end
     end
 
+    -- Readable true while the player is in combat lockdown; false when unknown.
+    function A:InCombat()
+        if type(env.InCombatLockdown) ~= "function" then return false end
+        local ok, result = pcall(env.InCombatLockdown)
+        return ok and self:Public(result) and result == true
+    end
+
     function A:IsPlayerGUID(guid)
         return self:Public(guid) and type(guid) == "string" and guid:sub(1, 7) == "Player-" or false
     end

@@ -11,6 +11,7 @@
 Sounds.lua
 Logic.lua
 Profiles.lua
+Procs.lua
 History.lua
 Locale.lua
 Theme.lua

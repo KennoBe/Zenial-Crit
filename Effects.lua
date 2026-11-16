@@ -107,7 +107,8 @@ function Effects.New(api)
         return frame
     end
 
-    local priorities = {crit = 1, heal = 1, low = 1, healLow = 1, record = 2, healRecord = 2, kill = 3, streak = 4, proc = 2}
+    local priorities = {crit = 1, heal = 1, low = 1, healLow = 1, record = 2, healRecord = 2, kill = 3, streak = 4, proc = 2,
+        windfury = 2}
 
     function E:PlayCategory(category, config, now, preview, retryID, tier)
         if not priorities[category] then return false, "No sound category selected." end
@@ -116,6 +117,7 @@ function Effects.New(api)
             or category == "heal" and config.healSound
             or category == "streak" and config.streakSound
             or category == "proc" and config.procSound
+            or category == "windfury" and config.procSound
             or category == "record" and config.recordSoundEnabled
             or category == "healRecord" and config.healRecordSoundEnabled
             or category == "low" and config.lowCritEnabled
@@ -264,7 +266,7 @@ function Effects.New(api)
             self.graphicsPaused[kind] = not ok
             shown = ok and result == true
         end
-        if shown and config[kind .. "Flash"] == true then self:StartFlash(config, kind, now) end
+        if shown and (config[kind .. "Flash"] == true or opts.flash == true) then self:StartFlash(config, kind, now) end
         local played, reason = false, nil
         if soundCategory then played, reason = self:PlayCategory(soundCategory, config, now, preview, nil, opts.tier) end
         return shown, played, reason
