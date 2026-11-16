@@ -398,6 +398,15 @@ function L.Sanitize(input)
         local fallback = input[keys.ids] == nil and soundFallbacks[category] or nil
         result[keys.ids] = NS.Sounds.SanitizeIDs(input[keys.ids], fallback, result)
     end
+    -- Profiles of the 2.0.0 test builds (schema 15 and 16) were saved before the announcer files of the
+    -- kill streak existed. They get the announcer once, unless they already use one of its lines.
+    if input.schema == 15 or input.schema == 16 then
+        local usesAnnouncer = false
+        for _, id in ipairs(result.streakSoundIDs) do
+            if id == "announcer" or id:sub(1, 7) == "streak_" then usesAnnouncer = true break end
+        end
+        if not usesAnnouncer then result.streakSoundMode, result.streakSoundIDs = "single", {"announcer"} end
+    end
     return result
 end
 
