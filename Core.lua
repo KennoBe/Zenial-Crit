@@ -11,18 +11,32 @@ app.frame = frame
 local VERSION = "2.0.0"
 app.version = VERSION
 
--- Config used before login (damage font): root.last, else "Standard", else a flat legacy table.
+-- Config used before login (damage font): the profile of this character, else root.last, else "Standard",
+-- else a flat legacy table. The identity can be missing this early; nothing is stored here.
 local function savedConfig()
     local saved = ZenialCritDB
     if type(saved) ~= "table" then saved = ZenialComixDB end
     if type(saved) == "table" and type(saved.profiles) == "table" then
-        local profile = type(saved.last) == "string" and saved.profiles[saved.last] or nil
+        local profile
+        local identified, key = pcall(api.CharacterIdentity, api)
+        if identified and type(key) == "string" and key ~= "" then
+            local resolved, _, config = pcall(NS.Profiles.Resolve, saved, key)
+            if resolved and type(config) == "table" then profile = config end
+        end
+        if not profile then profile = type(saved.last) == "string" and saved.profiles[saved.last] or nil end
         return NS.Logic.Sanitize(profile or saved.profiles[NS.Profiles.DefaultName])
     end
     return NS.Logic.Sanitize(saved)
 end
 
 api:ApplyDamageFont(savedConfig().critFont)
+
+-- Plates are followed only while a crit or kill text can actually appear over one.
+function app:WantsNameplateTracking()
+    local db = self.db
+    return db.displayMode == "nameplate" and db.enabled ~= false
+        and (db.critGraphics == true or db.killGraphics == true)
+end
 
 -- ZenialCritDB is the profile root; app.db is the flat config of the active profile.
 function app:Changed()
@@ -32,7 +46,7 @@ function app:Changed()
         ZenialCritDB = self.root
     end
     api:ApplyDamageFont(self.db.critFont)
-    api:TrackNameplates(self.db.displayMode == "nameplate")
+    api:TrackNameplates(self:WantsNameplateTracking())
     if self.initialized then self:SyncEvents() end
     for _, view in ipairs(self.views) do view:Refresh() end
 end
@@ -51,11 +65,16 @@ function app:SetProfile(name)
     if not self.root or type(name) ~= "string" or not self.root.profiles[name] then return false end
     self.root.profiles[self.profile] = self.db
     local key = self:EnsureCharacter()
-    if key then NS.Profiles.Assign(self.root, key, name) end
+    local assignError
+    if key then
+        local assigned, err = NS.Profiles.Assign(self.root, key, name)
+        if not assigned then assignError = err end
+    end
     self.root.last = name
     self.profile, self.db = name, self.root.profiles[name]
     self:Changed()
-    return true
+    -- A failed assignment does not stop the profile from being active for this session.
+    return true, assignError
 end
 
 function app:CreateProfile(name)
@@ -200,7 +219,7 @@ function app:Trigger(kind, preview, soundCategory, victimGUID, opts)
     api:Diagnostic("show_result", kind, ok, graphic, played, reason, self.effects:Count(), self.effects.graphicsPaused[kind])
     if not ok then self.effects:Clear(); return false end
     if self.effects:Busy() then frame:SetScript("OnUpdate", onUpdate) end
-    return true, note
+    return true, note, graphic == true, played == true
 end
 
 -- Preview through the normal path; ignores switches, situation, threshold and sound pause.
@@ -286,11 +305,13 @@ function app:HandleKill(attackerGUID, victimGUID)
         local _, tier = NS.Logic.StreakStep(self.state, now, db.streakWindow)
         if tier >= 1 then
             local streakSound = NS.Logic.SoundCategory(db, nil, "streak")
-            if self:Trigger("streak", false, streakSound, nil, {text = NS.Logic.StreakText(db, tier), tier = tier}) then
-                -- The streak replaces only what it shows itself: its text replaces the kill text,
-                -- its sound the kill sound. A streak without text never hides the kill text.
-                if db.streakHideKill and db.streakGraphics then killOpts = {noGraphic = true} end
-                if streakSound then killSound = nil end
+            local shown, _, graphic, played = self:Trigger("streak", false, streakSound, nil,
+                {text = NS.Logic.StreakText(db, tier), tier = tier})
+            if shown then
+                -- The streak replaces only what it really showed or played: its text replaces the kill text,
+                -- its sound the kill sound. A streak that drew or played nothing hides nothing.
+                if db.streakHideKill and graphic then killOpts = {noGraphic = true} end
+                if played then killSound = nil end
             end
         end
     end
@@ -321,10 +342,15 @@ function app:HandleObserved(kind, unit, amount, school)
         )
         classification = isRecord and "record" or NS.Logic.ClassifyCrit(amount, previous, self.db, kind)
     end
-    local snapshot = api:CritSnapshot(amount, school, unit)
-    if snapshot and self.history.enabled then self:RecordObserved(amount, school, snapshot, kind) end
-    if not self:Allowed(kind, classification) then return false end
     local chatCategory = NS.Logic.ChatCategory(classification, kind)
+    -- The snapshot reads names from the client: only when it is recorded or written to the chat.
+    local recording = self.history.enabled == true
+    local snapshot
+    if recording or NS.Logic.ChatAllowed(self.db, chatCategory) then
+        snapshot = api:CritSnapshot(amount, school, unit)
+    end
+    if snapshot and recording then self:RecordObserved(amount, school, snapshot, kind) end
+    if not self:Allowed(kind, classification) then return false end
     self:EmitChat(chatCategory, amount, school, snapshot and snapshot.target)
     local category, opts = NS.Logic.SoundCategory(self.db, classification, kind), nil
     if not NS.Logic.PassesThreshold(self.db, kind, amount, previous) then
@@ -382,7 +408,7 @@ function app:Init()
     self.history = NS.History.Sanitize(ZenialCritHistoryDB)
     ZenialCritHistoryDB = self.history
     self.effects = NS.Effects.New(api)
-    api:TrackNameplates(self.db.displayMode == "nameplate")
+    api:TrackNameplates(self:WantsNameplateTracking())
     self:SyncEvents()
     NS.Setup.Initialize(self,fresh)
     NS.Setup.Schedule()

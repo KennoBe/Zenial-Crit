@@ -17,7 +17,9 @@ end
 function Page.KindSegment(view, form)
     form:Card()
     form:Segment({full = true, options = KIND_OPTIONS,
-        get = function() return view.kind end, set = function(value) view.kind = value end})
+        get = function() return view.kind end,
+        -- Fields and the colour picker still open belong to the old kind: they save first.
+        set = function(value) form:ReleaseInput(); view.kind = value end})
 end
 
 function Page.Build(view, form)

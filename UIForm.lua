@@ -85,20 +85,21 @@ end
 -- ---------------------------------------------------------------------------------------------
 -- Values
 -- ---------------------------------------------------------------------------------------------
-function Form:Read(row)
+function Form:Read(row, heldKey)
     local spec = row.spec
     if spec.get then return spec.get() end
-    local key = keyOf(spec)
+    local key = heldKey or keyOf(spec)
     if key == nil then return nil end
     return self.ctx.app.db[key]
 end
 
 -- Writes a value (and only then calls onChange and the change notification). Nothing is written while the
--- form refreshes: client widgets report a change when they are set from code.
-function Form:Commit(row, value)
+-- form refreshes: client widgets report a change when they are set from code. A key kept earlier by the
+-- caller wins over the row key, which can change (event kind) while a field or the colour picker is open.
+function Form:Commit(row, value, key)
     if self.refreshing then return end
     local spec = row.spec
-    if spec.set then spec.set(value) else self.ctx.app.db[keyOf(spec)] = value end
+    if spec.set then spec.set(value) else self.ctx.app.db[key or keyOf(spec)] = value end
     if spec.onChange then spec.onChange(value) end
     if self.ctx.changed then self.ctx.changed() else self.ctx.app:Changed() end
     self:Update(row)
@@ -235,6 +236,7 @@ function Form:Slider(spec)
         fill:SetWidth(math.max(1, fraction * (SLIDER_W - 10) + 5))
         valueText:SetText(string.format(spec.format or "%g", value))
     end
+    -- While the thumb moves only the fill and the value text follow; the value is saved when it is released.
     slider:SetScript("OnValueChanged", function(_, raw)
         if self.refreshing or row.syncing then return end
         local low, high, step = bounds()
@@ -244,10 +246,19 @@ function Form:Slider(spec)
             row.syncing = true; slider:SetValue(value); row.syncing = false
         end
         paint(value)
-        if value ~= self:Read(row) then self:Commit(row, value) end
+        row.pending = value
     end)
+    row.finishDrag = function()
+        local value = row.pending
+        row.dragging, row.pending = false, nil
+        if value ~= nil and value ~= self:Read(row) then self:Commit(row, value) end
+    end
+    slider:SetScript("OnMouseDown", function() row.dragging, row.pending = true, nil end)
+    slider:SetScript("OnMouseUp", function() row.finishDrag() end)
     row.update = function()
         refreshLabels(self, row)
+        -- A refresh from outside never resets the value that is being dragged.
+        if row.dragging then return end
         local low, high, step = bounds()
         local value = tonumber(self:Read(row)) or low
         value = math.max(low, math.min(high, value))
@@ -459,16 +470,25 @@ local function chooseColor(self, row)
     if not picker then return end
     local current = self:Read(row)
     local original = type(current) == "table" and { current[1] or 1, current[2] or 1, current[3] or 1 } or { 1, 1, 1 }
+    -- The key of this session is fixed now: the row key can change while the picker is open.
+    local key = keyOf(row.spec)
+    if self.colorSession then self.colorSession.closed = true end
+    local session = { picker = picker, closed = false }
+    self.colorSession = session
     local function apply(r, g, b)
+        if session.closed then return end
         if type(r) ~= "number" and type(picker.GetColorRGB) == "function" then
             local ok; ok, r, g, b = pcall(picker.GetColorRGB, picker)
             if not ok then return end
         end
-        if type(r) == "number" and type(g) == "number" and type(b) == "number" then self:Commit(row, { r, g, b }) end
+        if type(r) == "number" and type(g) == "number" and type(b) == "number" then self:Commit(row, { r, g, b }, key) end
     end
     local info = { r = original[1], g = original[2], b = original[3], hasOpacity = false,
         swatchFunc = function() apply() end,
-        cancelFunc = function() self:Commit(row, { original[1], original[2], original[3] }) end }
+        cancelFunc = function()
+            if not session.closed then self:Commit(row, { original[1], original[2], original[3] }, key) end
+        end }
+    session.swatchFunc = info.swatchFunc
     if type(picker.SetupColorPickerAndShow) == "function" and pcall(picker.SetupColorPickerAndShow, picker, info) then return end
     -- Clients without SetupColorPickerAndShow: the older fields of the picker frame.
     picker.func, picker.swatchFunc, picker.cancelFunc = info.swatchFunc, info.swatchFunc, info.cancelFunc
@@ -513,7 +533,7 @@ local function splitLines(text, maxLines, maxChars)
                     count = count + 1
                     if count > maxChars then cut = position - 1; break end
                 end
-                line = line:sub(1, cut)
+                line = line:sub(1, cut):match("^(.-)%s*$")
             end
             lines[#lines + 1] = line
             if maxLines and #lines >= maxLines then break end
@@ -551,18 +571,22 @@ function Form:Texts(spec)
     end
     edit:HookScript("OnSizeChanged", reflow)
     edit:HookScript("OnTextChanged", function(_, userInput) if userInput then reflow() end end)
+    -- The key is kept when the field gets focus: the row key can change while the user types.
+    edit:SetScript("OnEditFocusGained", function() row.heldKey = keyOf(row.spec) end)
     edit:SetScript("OnEditFocusLost", function(box)
         if self.refreshing then return end
+        local key = row.heldKey
+        row.heldKey = nil
         local text = box:GetText()
         local app = self.ctx.app
         local spec = row.spec
         if not spec.get and not spec.set and app.TextsChanged then
-            app:TextsChanged(keyOf(spec), text)
+            app:TextsChanged(key or keyOf(spec), text)
             if spec.onChange then spec.onChange(self:Read(row)) end
             if self.ctx.changed then self.ctx.changed() end
             return
         end
-        self:Commit(row, splitLines(text, spec.maxLines, spec.maxChars))
+        self:Commit(row, splitLines(text, spec.maxLines, spec.maxChars), key)
     end)
     row.update = function()
         refreshLabels(self, row)
@@ -588,11 +612,15 @@ function Form:Input(spec)
     row.control = edit
     local function commit(box)
         if self.refreshing then return end
+        local key = row.heldKey
+        row.heldKey = nil
         local text = box:GetText()
         local value = text
         if spec.numeric then value = tonumber(text) end
-        if value ~= self:Read(row) then self:Commit(row, value) end
+        if value ~= self:Read(row, key) then self:Commit(row, value, key) end
     end
+    -- The key is kept when the field gets focus (see Texts).
+    edit:SetScript("OnEditFocusGained", function() row.heldKey = keyOf(spec) end)
     edit:SetScript("OnEnterPressed", function(box) commit(box); box:ClearFocus() end)
     edit:SetScript("OnEditFocusLost", commit)
     row.update = function()
@@ -739,6 +767,31 @@ function Form:Refresh()
 end
 
 function Form:Height() return self.height end
+
+-- Takes the focus from every input field (the field saves under the key it kept), finishes a slider drag
+-- and closes a colour picker opened by this form; the last chosen colour stays.
+function Form:ReleaseInput()
+    for _, card in ipairs(self.cards) do
+        for _, row in ipairs(card.rows) do
+            local control = row.control
+            if (row.kind == "Texts" or row.kind == "Input") and control and control.HasFocus and control:HasFocus() then
+                control:ClearFocus()
+            elseif row.kind == "Slider" and row.dragging and row.finishDrag then
+                row.finishDrag()
+            end
+        end
+    end
+    local session = self.colorSession
+    self.colorSession = nil
+    if session and not session.closed then
+        session.closed = true
+        local picker = session.picker
+        local shown = type(picker.IsShown) ~= "function" or picker:IsShown()
+        if shown and (picker.swatchFunc == nil or picker.swatchFunc == session.swatchFunc) and type(picker.Hide) == "function" then
+            pcall(picker.Hide, picker)
+        end
+    end
+end
 
 -- Every configuration key of the page: the static keys of all rows (visible or not) plus the keys the rows
 -- report for function keys and get/set rows.

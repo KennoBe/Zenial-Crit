@@ -306,6 +306,8 @@ function Effects.New(api)
                     pcall(effect.frame.Hide, effect.frame)
                     effect.frame = nil
                 end
+                -- An effect without a frame is invisible: it frees its place at once.
+                if not effect.frame then table.remove(self.active, index) end
             end
         end
         local flash = self.flash

@@ -177,6 +177,7 @@ local DE = {
     ['Profile not found.']='Profil nicht gefunden.',
     ['Invalid profile data.']='Ungültige Profildaten.',
     ['Character is unknown.']='Der Charakter ist unbekannt.',
+    ['Too many characters are assigned.']='Es sind zu viele Charaktere zugeordnet.',
     ['Source profile not found.']='Quellprofil nicht gefunden.',
     ['Profiles are not ready.']='Die Profile sind noch nicht bereit.',
     ['Drag to move: %s']='Zum Verschieben ziehen: %s',

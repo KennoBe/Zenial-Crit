@@ -21,7 +21,12 @@ function Page.Build(view, form)
             return list
         end,
         get = function() return app.profile end,
-        set = function(name) setError(nil); app:SetProfile(name) end})
+        set = function(name)
+            setError(nil)
+            local ok, err = app:SetProfile(name)
+            -- The profile is active for this session even when the assignment could not be saved.
+            if ok and err then setError(err) end
+        end})
     nameRow = form:Input({label = "New profile", maxLetters = NS.Profiles.MaxNameLength,
         get = function() return view.profileName end, set = function(value) view.profileName = value or "" end})
     form:Buttons({{text = "Create as a copy", onClick = function()
@@ -31,7 +36,8 @@ function Page.Build(view, form)
         if not created then setError(err); view:Refresh(); return end
         setError(nil)
         view.profileName = ""
-        app:SetProfile(created)
+        local ok, assignError = app:SetProfile(created)
+        if ok and assignError then setError(assignError); view:Refresh() end
     end}})
     form:Note({tone = "warning", text = function() return view.profileError or "" end})
     local deleteRow = form:Buttons({{text = "Delete this profile", variant = "danger",

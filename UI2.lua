@@ -248,6 +248,9 @@ function UI.New(app, parent, embedded)
         local found = false
         for _, spec in ipairs(UI.Pages) do if spec.key == name then found = true end end
         if not found then name = "overview" end
+        -- An open field or colour picker of the page being left saves before the page changes.
+        local leaving = self.pages[self.page]
+        if self.page ~= name and leaving and leaving.form then leaving.form:ReleaseInput() end
         self.page = name
         closePopups(); self:ClosePagePopups(); dialog:Hide()
         if self.anchor and self.anchor:IsShown() then self:CloseAnchor() end

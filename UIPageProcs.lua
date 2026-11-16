@@ -62,6 +62,13 @@ function Page.Build(view, form)
         app.db.procTriggers = validList()
         app:Changed()
     end
+    local function releaseFields()
+        for _, rf in ipairs(rowFrames) do
+            for _, edit in ipairs({rf.id, rf.text}) do
+                if edit:HasFocus() then edit:ClearFocus() end
+            end
+        end
+    end
 
     local function logger()
         local l = api.env.ZenialDevLogger
@@ -102,13 +109,17 @@ function Page.Build(view, form)
                     rf.spell:SetHeight(14)
                     rf.text = kit.editBox(rf, 252, -5, 200, 24, false); rf.text:SetMaxLetters(MAX_TEXT)
                     rf.remove = kit.button(rf, "Remove", 462, -4, 100, function()
-                        table.remove(work, rf.index); commit()
+                        -- A field of the list may still hold focus: it saves first, never after the removal.
+                        releaseFields()
+                        if work[rf.index] then table.remove(work, rf.index); commit() end
                     end)
                     rf.remove:SetHeight(26)
                     for _, edit in ipairs({rf.id, rf.text}) do
                         edit:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
                         edit:SetScript("OnEditFocusLost", function()
-                            work[rf.index].idText, work[rf.index].text = rf.id:GetText(), rf.text:GetText()
+                            local item = work and work[rf.index]
+                            if not item then return end
+                            item.idText, item.text = rf.id:GetText(), rf.text:GetText()
                             commit()
                         end)
                     end

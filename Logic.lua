@@ -156,6 +156,24 @@ local function sanitizeColor(value, fallback)
     return result
 end
 
+local TEXT_LIMIT = 40
+
+local function charLength(text)
+    return #(text:gsub("[\128-\191]", ""))
+end
+
+-- Keeps whole UTF-8 characters.
+local function truncate(text, limit)
+    if charLength(text) <= limit then return text end
+    local count, last = 0, 0
+    for position, char in text:gmatch("()([^\128-\191][\128-\191]*)") do
+        count = count + 1
+        if count > limit then break end
+        last = position + #char - 1
+    end
+    return text:sub(1, last)
+end
+
 function L.SanitizeTexts(input, kind)
     local fallback = kind == "kill" and defaults.killTexts or kind == "heal" and defaults.healTexts
         or kind == "streak" and defaults.streakTexts or defaults.critTexts
@@ -171,7 +189,7 @@ function L.SanitizeTexts(input, kind)
         if type(value) == "string" then
             value = value:gsub("[%c]", ""):match("^%s*(.-)%s*$") or ""
             if value ~= "" then
-                result[#result + 1] = value:sub(1, 40)
+                result[#result + 1] = truncate(value, TEXT_LIMIT):match("^(.-)%s*$")
                 if #result >= 20 then break end
             end
         end
@@ -189,7 +207,7 @@ local function sanitizedTexts(values)
     if type(values) ~= "table" or #values < 1 or #values > 20 then return false end
     for index = 1, #values do
         local value = values[index]
-        if type(value) ~= "string" or value == "" or #value > 40 or value:find("[%c]")
+        if type(value) ~= "string" or value == "" or charLength(value) > TEXT_LIMIT or value:find("[%c]")
             or value:find("^%s") or value:find("%s$") then return false end
     end
     return true
@@ -211,7 +229,7 @@ end
 local function cleanLine(value, limit)
     if type(value) ~= "string" then return nil end
     value = value:gsub("[%c]", ""):match("^%s*(.-)%s*$") or ""
-    value = value:sub(1, limit):match("^%s*(.-)%s*$") or ""
+    value = truncate(value, limit):match("^%s*(.-)%s*$") or ""
     return value ~= "" and value or nil
 end
 

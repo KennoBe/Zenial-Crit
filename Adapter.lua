@@ -392,7 +392,8 @@ function Adapter.New(env)
         local logger = env.ZenialDevLogger
         self.traceNameplate = type(logger) == "table" and logger.running == true and logger.mode == "crit"
         self:Diagnostic("anchor_begin", victimGUID)
-        self:ScanNameplates()
+        -- Only a kill can belong to another plate than the target: crits and previews skip the full scan.
+        if victimGUID then self:ScanNameplates() end
         local anchor
         if victimGUID then
             anchor = self.nameplateCache[victimGUID]
