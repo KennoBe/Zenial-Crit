@@ -52,7 +52,7 @@ local defaults = {
     streakSoundMode = "single", streakSoundIDs = {"doom"},
     procSoundMode = "single", procSoundIDs = {"laser"},
     streakSoundChannel = "Master", procSoundChannel = "Master",
-    enabled = true, maxEffects = 3, stackSpacing = 46, critGap = 0, combine = false,
+    enabled = true, maxEffects = 3, stackSpacing = 60, critGap = 0, combine = false,
     critMinPercent = 0, healMinPercent = 0,
     situationWorld = "all", situationDungeon = "all", situationRaid = "all", situationPvp = "all",
     streakWindow = 8, streakTargets = "all", streakEscalate = true, streakHideKill = true,
@@ -327,8 +327,11 @@ function L.FontStyle(config, kind)
     return sanitizeFont(config[kind .. "Font"], "standard")
 end
 
-function L.EffectScale(config)
-    if config.displayMode == "nameplate" then return (config.nameplateScale or 1) * .6 end
+-- anchored == nil: decided by the display mode (1.9.1 behavior). true/false force the
+-- nameplate size or the fixed-position size.
+function L.EffectScale(config, anchored)
+    if anchored == nil then anchored = config.displayMode == "nameplate" end
+    if anchored then return (config.nameplateScale or 1) * .6 end
     return config.scale
 end
 

@@ -79,8 +79,40 @@ function Adapter.New(env)
             epic = {latin and "Fonts\\MORPHEUS_CYR.TTF" or self:Font(), 58, "THICKOUTLINE"},
             heavy = {"Fonts\\ARIALN.TTF", 64, "THICKOUTLINE"},
         }
+        if type(style) == "string" and style:sub(1, 7) == "shared:" then
+            local path = self:SharedFontPath(style:sub(8))
+            if path then return path, 58, "THICKOUTLINE" end
+        end
         local spec = specs[style] or specs.standard
         return spec[1], spec[2], spec[3]
+    end
+
+    local function sharedMedia()
+        if type(env.LibStub) ~= "function" and type(env.LibStub) ~= "table" then return nil end
+        local ok, media = pcall(env.LibStub, "LibSharedMedia-3.0", true)
+        if ok and type(media) == "table" then return media end
+    end
+
+    -- LibSharedMedia font path, or nil when the library or the font is missing.
+    function A:SharedFontPath(name)
+        local media = sharedMedia()
+        if not media or type(media.Fetch) ~= "function" or type(name) ~= "string" or name == "" then return nil end
+        local ok, path = pcall(media.Fetch, media, "font", name, true)
+        if ok and type(path) == "string" and path ~= "" then return path end
+    end
+
+    function A:SharedFonts()
+        local result = {}
+        local media = sharedMedia()
+        if not media or type(media.List) ~= "function" then return result end
+        local ok, list = pcall(media.List, media, "font")
+        if ok and type(list) == "table" then
+            for index = 1, #list do
+                if type(list[index]) == "string" and list[index] ~= "" then result[#result + 1] = list[index] end
+            end
+        end
+        table.sort(result)
+        return result
     end
 
     function A:ApplyDamageFont(style)

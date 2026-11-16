@@ -1,6 +1,8 @@
 local _, NS = ...
 local api = NS.Adapter.New(_G)
-local app = {api = api, state = NS.Logic.NewState(), initialized = false, killRegistered = false, critRegistered = false, views = {}, sessionRecords = {}}
+local app = {api = api, state = NS.Logic.NewState(), initialized = false, killRegistered = false, critRegistered = false,
+    spellcastRegistered = false, eventState = {unitCombat = "off", partyKill = "off", spellcast = "off"},
+    situation = "world", procSeen = {}, views = {}, sessionRecords = {}}
 NS.App = app
 local frame = api:Frame()
 if not frame then return end
@@ -30,6 +32,7 @@ function app:Changed()
     end
     api:ApplyDamageFont(self.db.critFont)
     api:TrackNameplates(self.db.displayMode == "nameplate")
+    if self.initialized then self:SyncEvents() end
     for _, view in ipairs(self.views) do view:Refresh() end
 end
 
@@ -101,6 +104,45 @@ end
 function app:SetHistoryEnabled(enabled)
     NS.History.SetEnabled(self.history, enabled)
     self:HistoryChanged()
+    if self.initialized then self:SyncEvents() end
+end
+
+local eventNames = {unitCombat = "UNIT_COMBAT", partyKill = "PARTY_KILL", spellcast = "UNIT_SPELLCAST_SUCCEEDED"}
+
+-- Registers only the events the current configuration needs.
+function app:SyncEvents()
+    if not self.db then return end
+    local needs = NS.Logic.Needs(self.db, self.history and self.history.enabled == true)
+    local function sync(name, flag, register)
+        if needs[name] then
+            if not self[flag] then self[flag] = register() end
+            self.eventState[name] = self[flag] and "on" or "failed"
+        else
+            if self[flag] then api:Unregister(frame, eventNames[name]) end
+            self[flag] = false
+            self.eventState[name] = "off"
+        end
+    end
+    sync("unitCombat", "critRegistered", function()
+        local ok, mode = api:RegisterUnit(frame, "UNIT_COMBAT", "target", "player")
+        self.critRegistration = ok and mode or nil
+        return ok
+    end)
+    sync("partyKill", "killRegistered", function() return api:Register(frame, "PARTY_KILL") end)
+    sync("spellcast", "spellcastRegistered", function()
+        return (api:RegisterUnit(frame, "UNIT_SPELLCAST_SUCCEEDED", "player"))
+    end)
+    return self.eventState
+end
+
+function app:UpdateSituation()
+    self.situation = NS.Logic.Situation(api:InstanceType())
+end
+
+-- Master switch and situation filter for real (non-preview) output.
+function app:Allowed(kind, classification)
+    return self.db.enabled ~= false
+        and NS.Logic.SituationAllows(self.db, self.situation or "world", kind, classification)
 end
 
 function app:ClearHistory()
@@ -128,29 +170,53 @@ local function onUpdate()
     local time = api:Time()
     if not time then app.effects:Clear(); frame:SetScript("OnUpdate", nil); return end
     app.effects:Update(time)
-    if app.effects:Count() == 0 then frame:SetScript("OnUpdate", nil) end
+    if not app.effects:Busy() then frame:SetScript("OnUpdate", nil) end
 end
 
-function app:Trigger(kind, preview, soundCategory, victimGUID)
+function app:Trigger(kind, preview, soundCategory, victimGUID, opts)
     api:Diagnostic("trigger", kind, preview == true, self.db.displayMode, self.db.critGraphics,
         self.db.killGraphics, self.effects:Count(), soundCategory)
+    if not preview and self.db.enabled == false then return false end
     local now = api:Time()
     if not now then return false end
     self.effects:Update(now)
     if not NS.Logic.Allow(self.state, self.db, kind, now, self.effects:Count(), preview == true) then return false end
     if preview and not soundCategory then soundCategory = kind end
-    local anchor
-    if self.db.displayMode == "nameplate" and kind ~= "heal" then
+    local anchor, note
+    -- Only crit and kill follow the nameplate; heal, streak and proc stay at the fixed position.
+    if self.db.displayMode == "nameplate" and (kind == "crit" or kind == "kill") then
         local ok, result = pcall(api.NameplateContext, api, victimGUID)
         api.traceNameplate = false
         api:Diagnostic("anchor_call", ok, ok and result ~= nil or false, not ok and result or nil)
         if ok then anchor = result end
+        if preview and not anchor then
+            local copy = {}
+            for key, value in pairs(opts or {}) do copy[key] = value end
+            copy.fixed, opts, note = true, copy, "no_target"
+        end
     end
-    local ok, graphic, played, reason = pcall(self.effects.Show, self.effects, kind, soundCategory, self.db, now, preview == true, anchor)
+    local ok, graphic, played, reason = pcall(self.effects.Show, self.effects, kind, soundCategory, self.db, now, preview == true, anchor, opts)
     api:Diagnostic("show_result", kind, ok, graphic, played, reason, self.effects:Count(), self.effects.graphicsPaused[kind])
     if not ok then self.effects:Clear(); return false end
-    if self.effects:Count() > 0 then frame:SetScript("OnUpdate", onUpdate) end
-    return true
+    if self.effects:Busy() then frame:SetScript("OnUpdate", onUpdate) end
+    return true, note
+end
+
+-- Preview through the normal path; ignores switches, situation, threshold and sound pause.
+function app:Preview(kind, tier)
+    if not self.effects then return false end
+    local opts
+    if kind == "streak" then
+        tier = type(tier) == "number" and tier >= 1 and math.floor(tier) or 1
+        opts = {text = NS.Logic.StreakText(self.db, tier), tier = tier}
+    elseif kind == "proc" then
+        local text = "PROC!"
+        for _, item in ipairs(self.db.procTriggers or {}) do
+            if item.enabled ~= false then text = item.text; break end
+        end
+        opts = {text = text}
+    end
+    return self:Trigger(kind, true, kind, nil, opts)
 end
 
 function app:PreviewSound(category, retryID)
@@ -211,24 +277,62 @@ function app:HandleKill(attackerGUID, victimGUID)
     local now = api:Time()
     if not now or not api:OwnedKill(attackerGUID, victimGUID) then return false end
     if not NS.Logic.AllowKill(self.state, victimGUID, now) then return false end
+    local db = self.db
+    if not self:Allowed("kill") then return false end
     self:EmitChat("kill")
-    return self:Trigger("kill", false, self.db.killSound and "kill" or nil, victimGUID)
+    local killSound, killOpts = db.killSound and "kill" or nil, nil
+    if (db.streakGraphics or db.streakSound) and (db.streakTargets ~= "players" or api:IsPlayerGUID(victimGUID)) then
+        local _, tier = NS.Logic.StreakStep(self.state, now, db.streakWindow)
+        if tier >= 1 then
+            local streakSound = NS.Logic.SoundCategory(db, nil, "streak")
+            if self:Trigger("streak", false, streakSound, nil, {text = NS.Logic.StreakText(db, tier), tier = tier}) then
+                -- The streak replaces only what it shows itself: its text replaces the kill text,
+                -- its sound the kill sound. A streak without text never hides the kill text.
+                if db.streakHideKill and db.streakGraphics then killOpts = {noGraphic = true} end
+                if streakSound then killSound = nil end
+            end
+        end
+    end
+    return self:Trigger("kill", false, killSound, victimGUID, killOpts)
+end
+
+function app:HandleSpellcast(unit, _, spellID)
+    if not api:Public(unit) or unit ~= "player" then return false end
+    if not api:Public(spellID) or type(spellID) ~= "number" then return false end
+    local trigger = NS.Logic.ProcMatch(self.db, spellID)
+    if not trigger then return false end
+    local now = api:Time()
+    if not now then return false end
+    local last = self.procSeen[spellID]
+    if last and now >= last and now - last < .3 then return false end
+    self.procSeen[spellID] = now
+    if not self:Allowed("proc") then return false end
+    return self:Trigger("proc", false, NS.Logic.SoundCategory(self.db, nil, "proc"), nil, {text = trigger.text})
 end
 
 function app:HandleObserved(kind, unit, amount, school)
     local key = self:EnsureCharacter()
-    local classification = "normal"
+    local classification, previous = "normal", nil
     if key then
-        local isRecord, previous = NS.History.Compare(
+        local isRecord
+        isRecord, previous = NS.History.Compare(
             self.history, key, amount, school, self.history.enabled == true, self.sessionRecords, kind
         )
         classification = isRecord and "record" or NS.Logic.ClassifyCrit(amount, previous, self.db, kind)
     end
     local snapshot = api:CritSnapshot(amount, school, unit)
     if snapshot and self.history.enabled then self:RecordObserved(amount, school, snapshot, kind) end
+    if not self:Allowed(kind, classification) then return false end
     local chatCategory = NS.Logic.ChatCategory(classification, kind)
     self:EmitChat(chatCategory, amount, school, snapshot and snapshot.target)
-    return self:Trigger(kind, false, NS.Logic.SoundCategory(self.db, classification, kind))
+    local category, opts = NS.Logic.SoundCategory(self.db, classification, kind), nil
+    if not NS.Logic.PassesThreshold(self.db, kind, amount, previous) then
+        -- Below the threshold: no graphic and no normal sound; record and weak sounds stay.
+        opts = {noGraphic = true}
+        if category == kind then category = nil end
+        if not category then return false end
+    end
+    return self:Trigger(kind, false, category, nil, opts)
 end
 
 function app:HandleCombat(unit, action, modifier, amount, school)
@@ -236,6 +340,7 @@ function app:HandleCombat(unit, action, modifier, amount, school)
         if not api:Public(amount) or not api:Public(school) then
             -- Generic output needs only the public crit flag. Never compare,
             -- record or format protected numeric payloads, including chat text.
+            if not self:Allowed("crit", "unknown") then return false end
             return self:Trigger("crit", false, NS.Logic.SoundCategory(self.db, "unknown", "crit"))
         end
         return self:HandleObserved("crit", unit, amount, school)
@@ -269,24 +374,30 @@ function app:Init()
     ZenialCritDB = self.root
     self:EnsureCharacter()
     self.profile, self.db = NS.Profiles.Resolve(self.root, self.characterKey)
+    self.root.last = self.profile
+    self:UpdateSituation()
     api:ApplyDamageFont(self.db.critFont)
     ZenialComixDB = nil
     self.history = NS.History.Sanitize(ZenialCritHistoryDB)
     ZenialCritHistoryDB = self.history
     self.effects = NS.Effects.New(api)
     api:TrackNameplates(self.db.displayMode == "nameplate")
-    self.killRegistered = api:Register(frame, "PARTY_KILL")
-    self.critRegistered, self.critRegistration = api:RegisterUnit(frame, "UNIT_COMBAT", "target", "player")
+    self:SyncEvents()
     NS.Setup.Initialize(self,fresh)
     NS.Setup.Schedule()
     api:Slash(function(command)
         command = string.lower(command or ""):match("^%s*(.-)%s*$")
+        local streakTier = command:match("^streak%s*(%d*)$")
         if command == "preview" or command == "vorschau" then
-            self:Trigger("crit", true, "crit")
+            self:Preview("crit")
         elseif command == "kill" or command == "last-hit" then
-            self:Trigger("kill", true, "kill")
+            self:Preview("kill")
         elseif command == "heal" then
-            self:PreviewSound("heal")
+            self:Preview("heal")
+        elseif streakTier then
+            self:Preview("streak", tonumber(streakTier))
+        elseif command == "proc" then
+            self:Preview("proc")
         elseif command == "config" then
             NS.Setup.Open()
         else
@@ -312,6 +423,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
         -- Readable token first; the global fallback also delivers other units.
         local unit = ...
         if api:Public(unit) and (unit == "target" or unit == "player") then app:HandleCombat(...) end
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" and app.initialized then
+        app:HandleSpellcast(...)
+    elseif (event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA") and app.initialized then
+        app:UpdateSituation()
     elseif event == "ADDON_LOADED" then
         local name = ...
         if name == "ZenialCrit" then api:ApplyDamageFont(savedConfig().critFont) end
@@ -322,6 +437,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
 end)
 api:Register(frame, "PLAYER_LOGIN")
 api:Register(frame, "ADDON_LOADED")
+api:Register(frame, "PLAYER_ENTERING_WORLD")
+api:Register(frame, "ZONE_CHANGED_NEW_AREA")
 
 _G.ZenialAddonPanels = _G.ZenialAddonPanels or {}
 _G.ZenialAddonPanels.ZenialCrit = {
