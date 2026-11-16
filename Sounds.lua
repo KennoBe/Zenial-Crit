@@ -12,7 +12,7 @@ local builtinFiles = {
     tada = "tada.wav", doom = "doom.wav", bonk = "bonk.wav",
     klong = "klong.wav", punch = "punch.wav", squeak = "squeak.wav",
     bruh = "bruh.wav", womp = "womp.wav", gameover = "gameover.wav",
-    fall = "fall.wav", thunder = "thunder.wav", meme_bonk = "meme_bonk.mp3",
+    fall = "fall.wav", thunder = "thunder.mp3", meme_bonk = "meme_bonk.mp3",
     meme_bowomp = "meme_bowomp.mp3", meme_bruh = "meme_bruh.mp3",
     meme_oof = "meme_oof.mp3",
     streak_double = "streak_double.mp3", streak_triple = "streak_triple.mp3", streak_ultra = "streak_ultra.mp3",
