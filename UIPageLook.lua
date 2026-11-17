@@ -16,7 +16,7 @@ end
 -- The event kind chosen at the top of the Appearance and Animations pages.
 function Page.KindSegment(view, form)
     form:Card()
-    form:Segment({full = true, options = KIND_OPTIONS,
+    form:Segment({full = true, anchor = "kind", options = KIND_OPTIONS,
         get = function() return view.kind end,
         -- Fields and the colour picker still open belong to the old kind: they save first.
         set = function(value) form:ReleaseInput(); view.kind = value end})
@@ -47,7 +47,8 @@ function Page.Build(view, form)
     form:Slider({key = key("Size"), keys = Page.KindKeys("Size"), label = "Size of this event",
         desc = "Is multiplied by the overall size.", min = .5, max = 2.5, step = .05, format = "%.2f"})
     -- Opacity is stored as 0.2 to 1 and shown in percent.
-    form:Slider({label = "Opacity", advanced = true, keys = Page.KindKeys("Alpha"), min = 20, max = 100, step = 5, format = "%d %%",
+    form:Slider({label = "Opacity", anchor = "opacity", advanced = true, keys = Page.KindKeys("Alpha"), min = 20, max = 100, step = 5, format = "%d %%",
+        default = function() return math.floor((form.ctx.default(view.kind .. "Alpha") or 1) * 100 + .5) end,
         get = function() return math.floor((app.db[view.kind .. "Alpha"] or 1) * 100 + .5) end,
         set = function(value) app.db[view.kind .. "Alpha"] = value / 100 end})
     form:Texts({key = key("Texts"), keys = Page.KindKeys("Texts"), maxLines = 20, maxChars = 40,

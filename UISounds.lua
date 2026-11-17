@@ -1,5 +1,6 @@
 local _, NS = ...
-local T, I = NS.Theme, NS.Locale
+local T, K, I = NS.Theme, NS.Kit, NS.Locale
+local Window, Form = NS.Window, NS.Form
 local function tr(value) return I.Text(value) end
 -- Sound library: catalog, search, own files. The library sits in a row of the Sounds page; the
 -- selection of the category, sound, mix and channel are ordinary form rows (UIPageSounds.lua).
@@ -16,13 +17,24 @@ local categoryLabels = {}
 for _, entry in ipairs(Sounds.Categories) do categoryLabels[entry[1]] = entry[2] end
 Sounds.CategoryLabels = categoryLabels
 
--- Library layout (inside a 608 px card).
+-- Library layout (inside a card; the list takes the width of the row less the rail).
 Sounds.LibraryHeight = 520
-local LIST_WIDTH, LIST_HEIGHT = 584, 240
+local LIST_HEIGHT, RAIL = 240, 16
 
-function Sounds.DefineMethods(ctx)
-    local app, api, view = ctx.app, ctx.api, ctx.view
-    local kit = ctx.kit
+local function text(parent, role, color, x, y, width, height)
+    local fs = K.Text(parent, "", role, color)
+    fs:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+    if width then fs:SetWidth(width) end
+    if height then fs:SetHeight(height) end
+    return fs
+end
+
+local function button(parent, value, width, action, variant)
+    return T.Button(parent, tr(value), width, 26, action, variant or "secondary")
+end
+
+function Sounds.DefineMethods(view)
+    local app, api = view.app, view.api
 
     -- Names of the chosen sounds, and whether one of them is missing.
     function view:SoundSummary(category)
@@ -43,8 +55,8 @@ function Sounds.DefineMethods(ctx)
         end
         -- The Sound card repeats a failure, because the library may be hidden.
         self.soundFeedback = (not ok) and reason or nil
-        local form = self.pages.sounds and self.pages.sounds.form
-        if form and self.page == "sounds" then form:Refresh() end
+        local page = self:Page("sounds")
+        if page and page.form and self:CurrentPage() == "sounds" then page.form:Refresh() end
     end
 
     local function categoryNames(categories)
@@ -63,8 +75,8 @@ function Sounds.DefineMethods(ctx)
         local item = NS.Sounds.CustomByID(app.db, id); if not item then return end
         local used = NS.Sounds.UsedBy(app.db, id)
         local suffix = #used > 0 and ("\n" .. tr("Used by") .. ": " .. categoryNames(used) .. ". " .. tr("These selections become incomplete.")) or ""
-        self:Confirm({title = "Remove own sound?", text = function() return "%s", item.name .. suffix end, confirm = "Remove entry",
-            onConfirm = function() app:RemoveCustomSound(id); view:RefreshSounds() end})
+        self:Confirm({title = "Remove own sound?", text = item.name .. suffix, accept = "Remove entry", variant = "danger",
+            onAccept = function() app:RemoveCustomSound(id); view:RefreshSounds() end})
     end
 
     local function isSelected(id)
@@ -92,18 +104,22 @@ function Sounds.DefineMethods(ctx)
 
     local function catalogRow(index)
         local row = view.catalogRows[index]; if row then return row end
-        local label, button = kit.label, kit.button
-        row = api:Frame("Frame", nil, view.catalogContent, BackdropTemplateMixin and "BackdropTemplate" or nil)
-        row:SetSize(LIST_WIDTH - 18, 31); if T then T.StyleRow(row) end
-        row.name = label(row, "", 10, -7, 190, "GameFontHighlight", "text")
-        row.source = label(row, "", 205, -8, 75, "GameFontHighlightSmall", "muted")
-        row.pick = button(row, "Select", 284, -2, 82, function() view:ToggleCatalogSound(row.item.id) end)
-        row.test = button(row, "Test", 372, -2, 60, function()
+        local content = view.catalogContent
+        row = CreateFrame("Frame", nil, content, BackdropTemplateMixin and "BackdropTemplate" or nil)
+        row:SetHeight(31); T.StyleRow(row)
+        row.name = text(row, "body", "text", 10, -7, 190)
+        row.source = text(row, "caption", "muted", 205, -8, 75)
+        row.remove = button(row, "×", 35, function() view:ConfirmRemove(row.item.id) end, "danger")
+        row.remove:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -3)
+        Form.Tooltip(row.remove, tr("Remove entry"), "")
+        row.edit = button(row, "Edit", 55, function() view:EditCustom(row.item.id) end)
+        row.edit:SetPoint("RIGHT", row.remove, "LEFT", -6, 0)
+        row.test = button(row, "Test", 60, function()
             local ok, reason = app:PreviewSoundRef(row.item.id, view.soundCategory); view:SetSoundStatus(ok, reason)
         end)
-        row.edit = button(row, "Edit", 438, -2, 55, function() view:EditCustom(row.item.id) end)
-        row.remove = button(row, "×", 499, -2, 35, function() view:ConfirmRemove(row.item.id) end, "danger")
-        kit.tip(row.remove, "Remove entry")
+        row.test:SetPoint("RIGHT", row.edit, "LEFT", -6, 0)
+        row.pick = button(row, "Select", 82, function() view:ToggleCatalogSound(row.item.id) end)
+        row.pick:SetPoint("RIGHT", row.test, "LEFT", -6, 0)
         view.catalogRows[index] = row; return row
     end
 
@@ -123,7 +139,10 @@ function Sounds.DefineMethods(ctx)
         end
         for index, item in ipairs(visible) do
             local row = catalogRow(index); row.item = item
-            row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, self.catalogStartY - (index - 1) * 34)
+            local top = self.catalogStartY - (index - 1) * 34
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", self.catalogContent, "TOPLEFT", 0, top)
+            row:SetPoint("TOPRIGHT", self.catalogContent, "TOPRIGHT", 0, top)
             row.name:SetText(item.name); row.source:SetText(tr(item.source == "builtin" and "Included" or item.source == "custom" and "Own sounds" or "SharedMedia"))
             local selected = isSelected(item.id)
             row.pick:SetText(tr(mix and (selected and "Remove" or "Add") or (selected and "Selected" or "Select")))
@@ -135,7 +154,7 @@ function Sounds.DefineMethods(ctx)
         self.catalogContent:SetHeight(#visible == 0 and 50 or #visible * 34)
         if self.catalogScroll.UpdateScrollChildRect then self.catalogScroll:UpdateScrollChildRect() end
         self.catalogScroll:RefreshScrollbar()
-        for source, b in pairs(self.sourceButtons) do if T then T.SetSelected(b, source == self.soundSource) end end
+        for source, b in pairs(self.sourceButtons) do T.SetSelected(b, source == self.soundSource) end
     end
 
     -- The library only changes with the data of the chosen category.
@@ -149,53 +168,69 @@ function Sounds.DefineMethods(ctx)
     end
 end
 
--- Builds the library into `frame` (a row of the Sounds page, 608 px wide).
-function Sounds.BuildLibrary(ctx, frame)
-    local app, api, view = ctx.app, ctx.api, ctx.view
-    local kit = ctx.kit
-    local label, button, divider, styleScroll, editBox = kit.label, kit.button, kit.divider, kit.styleScroll, kit.editBox
+-- Builds the library into `frame`, a row of the Sounds page that is `width` wide.
+function Sounds.BuildLibrary(view, frame, width)
+    local app = view.app
+    -- A text that spans the row and wraps.
+    local function across(fs, y, height)
+        fs:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, y)
+        fs:SetHeight(height); fs:SetWordWrap(true)
+    end
 
-    view.customHint = label(frame, "", 0, 0, 600, "GameFontHighlightSmall", "muted")
-    view.customHint:SetHeight(34)
-    label(frame, "Search", 0, -42, 100, "GameFontHighlightSmall", "muted")
-    view.soundSearch = editBox(frame, 0, -58, 220, 28, false); view.soundSearch:SetMaxLetters(60)
-    view.soundSearch:SetScript("OnTextChanged", function(_, userInput) if userInput then view:UpdateCatalog() end end)
+    view.customHint = text(frame, "caption", "muted", 0, 0)
+    across(view.customHint, 0, 34)
+    text(frame, "caption", "muted", 0, -42, 100):SetText(tr("Search"))
+    view.soundSearch = Form.Edit(frame, {width = 220, maxLetters = 60, live = true, tr = tr,
+        set = function() view:UpdateCatalog() end})
+    view.soundSearch:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -60)
     view.sourceButtons = {}
     for i, spec in ipairs({{"all", "All"}, {"builtin", "Included"}, {"custom", "Own sounds"}, {"shared", "SharedMedia"}}) do
         local source = spec[1]
-        local b = button(frame, spec[2], 232 + (i - 1) * 94, -58, 90, function()
+        local b = button(frame, spec[2], 90, function()
             view.soundSource = source; view:UpdateCatalog()
         end)
-        if T then T.StyleTab(b) end; view.sourceButtons[source] = b
+        b:SetPoint("TOPLEFT", frame, "TOPLEFT", 232 + (i - 1) * 94, -58)
+        T.StyleTab(b); view.sourceButtons[source] = b
     end
-    local catalogScroll = api:Frame("ScrollFrame", nil, frame)
-    catalogScroll:SetPoint("TOPLEFT", 0, -96); catalogScroll:SetSize(LIST_WIDTH, LIST_HEIGHT)
-    local catalogContent = api:Frame("Frame", nil, catalogScroll); catalogContent:SetSize(LIST_WIDTH - 22, 1)
-    catalogScroll:SetScrollChild(catalogContent)
-    styleScroll(catalogScroll, 34)
+    local catalogScroll, catalogContent = Window.ScrollArea(frame, math.max(100, width - RAIL - 2))
+    catalogScroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -96); catalogScroll:SetHeight(LIST_HEIGHT)
     view.catalogScroll, view.catalogContent, view.catalogStartY = catalogScroll, catalogContent, -2
-    view.catalogEmpty = label(catalogContent, "No sounds match the current search or source.",
-        10, -10, LIST_WIDTH - 60, "GameFontHighlightSmall", "muted")
-    view.catalogEmpty:SetHeight(40); view.catalogEmpty:Hide()
+    view.catalogEmpty = text(catalogContent, "caption", "muted", 10, -10)
+    view.catalogEmpty:SetText(tr("No sounds match the current search or source."))
+    view.catalogEmpty:SetPoint("TOPRIGHT", catalogContent, "TOPRIGHT", -10, -10)
+    view.catalogEmpty:SetHeight(40); view.catalogEmpty:SetWordWrap(true); view.catalogEmpty:Hide()
 
-    divider(frame, -348)
-    label(frame, "OWN SOUND FILES", 0, -362, 240, "GameFontNormal", "gold")
-    local customHelp = label(frame, "Copy files to Interface\\ZenialSounds\\ and enter the relative filename. New files can require a full WoW restart.",
-        0, -386, 600, "GameFontHighlightSmall", "muted"); customHelp:SetHeight(34)
-    label(frame, "Display name", 0, -426, 170, "GameFontHighlightSmall", "muted")
-    label(frame, "Relative filename", 180, -426, 230, "GameFontHighlightSmall", "muted")
-    view.customName = editBox(frame, 0, -442, 170, 28, false)
-    view.customFile = editBox(frame, 180, -442, 230, 28, false)
-    view.customName:SetMaxLetters(60); view.customFile:SetMaxLetters(160)
-    view.customSave = button(frame, "Save", 420, -442, 76, function()
+    local line = T.Divider(frame)
+    line:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -348); line:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -348)
+    text(frame, "overline", "goldDim", 0, -362, 240):SetText(tr("OWN SOUND FILES"))
+    local customHelp = text(frame, "caption", "muted", 0, -382)
+    customHelp:SetText(tr("Copy files to Interface\\ZenialSounds\\ and enter the relative filename. New files can require a full WoW restart."))
+    across(customHelp, -382, 34)
+    text(frame, "caption", "muted", 0, -426, 170):SetText(tr("Display name"))
+    text(frame, "caption", "muted", 180, -426, 230):SetText(tr("Relative filename"))
+    view.customName = Form.Edit(frame, {width = 170, maxLetters = 60, tr = tr})
+    view.customName:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -444)
+    view.customFile = Form.Edit(frame, {width = 230, maxLetters = 160, tr = tr})
+    view.customFile:SetPoint("TOPLEFT", frame, "TOPLEFT", 180, -444)
+    view.customSave = button(frame, "Save", 76, function()
         local id, err = app:AddOrUpdateCustomSound(view.customName:GetText(), view.customFile:GetText(), view.editCustomID)
         if id then
             view.editCustomID = nil; view.customName:SetText(""); view.customFile:SetText("")
             view:SetSoundStatus(true, tr("Own sound saved.")); view:RefreshSounds()
         else view:SetSoundStatus(false, err) end
     end, "primary")
-    view.customCancel = button(frame, "Cancel", 502, -442, 72, function()
+    view.customSave:SetPoint("TOPLEFT", frame, "TOPLEFT", 420, -443)
+    view.customCancel = button(frame, "Cancel", 72, function()
         view.editCustomID = nil; view.customName:SetText(""); view.customFile:SetText(""); view:RefreshSounds()
     end)
-    view.soundStatus = label(frame, "", 0, -482, 600, "GameFontHighlightSmall", "muted"); view.soundStatus:SetHeight(34)
+    view.customCancel:SetPoint("TOPLEFT", frame, "TOPLEFT", 502, -443)
+    view.soundStatus = text(frame, "caption", "muted", 0, -482)
+    across(view.soundStatus, -482, 34)
+end
+
+-- The list follows the width of its row.
+function Sounds.FitLibrary(view, width)
+    if view.catalogScroll and view.catalogScroll.SetContentWidth then
+        view.catalogScroll:SetContentWidth(math.max(100, width - RAIL - 2))
+    end
 end

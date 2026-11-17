@@ -12,7 +12,7 @@ local frame = api:Frame()
 if not frame then return end
 app.frame = frame
 
-local VERSION = "2.1.1"
+local VERSION = "2.2.0"
 app.version = VERSION
 
 -- Config used before login (damage font): the profile of this character, else root.last, else "Standard",
@@ -682,7 +682,7 @@ function app:Init()
             end
             if self.ui then
                 -- /zcrit toggles the window on the page shown last; /zcrit settings opens the overview.
-                if command == "settings" then self.ui:SetPage("overview"); self.ui.frame:Show()
+                if command == "settings" then self.ui:Open("overview")
                 else self.ui:Toggle() end
             end
         end

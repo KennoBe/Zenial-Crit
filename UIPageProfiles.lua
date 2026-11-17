@@ -14,7 +14,7 @@ function Page.Build(view, form)
     local function setError(message) view.profileError = message end
 
     form:Card("Profile")
-    form:Select({label = "Profile of this character", translate = false,
+    form:Select({label = "Profile of this character", anchor = "profile", translate = false,
         options = function()
             local list = {}
             for _, name in ipairs(names()) do list[#list + 1] = {name, name} end
@@ -27,7 +27,7 @@ function Page.Build(view, form)
             -- The profile is active for this session even when the assignment could not be saved.
             if ok and err then setError(err) end
         end})
-    nameRow = form:Input({label = "New profile", maxLetters = NS.Profiles.MaxNameLength,
+    nameRow = form:Input({label = "New profile", anchor = "newProfile", maxLetters = NS.Profiles.MaxNameLength,
         get = function() return view.profileName end, set = function(value) view.profileName = value or "" end})
     form:Buttons({{text = "Create as a copy", onClick = function()
         -- The field may still hold focus: read what is typed, not what was last committed.
@@ -44,8 +44,8 @@ function Page.Build(view, form)
         onClick = function()
             local name = app.profile
             view:Confirm({title = "Delete this profile",
-                text = function() return 'Delete the profile "%s"?', name end,
-                confirm = "Delete", onConfirm = function()
+                text = string.format(NS.Locale.Text('Delete the profile "%s"?'), name),
+                accept = "Delete", variant = "danger", onAccept = function()
                     local ok, err = app:DeleteProfile(name)
                     if ok then setError(nil) else setError(err) end
                     view:Refresh()
@@ -57,8 +57,8 @@ function Page.Build(view, form)
     form:Card("Reset")
     form:Buttons({{text = "Reset all settings of this profile", variant = "danger", onClick = function()
         local name = app.profile
-        view:Confirm({title = "Reset", text = function() return 'Reset all settings of the profile "%s"?', name end,
-            confirm = "Reset", onConfirm = function()
+        view:Confirm({title = "Reset", text = string.format(NS.Locale.Text('Reset all settings of the profile "%s"?'), name),
+            accept = "Reset", variant = "danger", onAccept = function()
                 local keys = {}
                 for key in pairs(NS.Logic.Defaults()) do
                     if not KEEP[key] then keys[#keys + 1] = key end

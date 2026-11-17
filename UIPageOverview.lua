@@ -9,7 +9,7 @@ function Page.Build(view, form)
     form:Card()
     form:Toggle({key = "enabled", label = "Effects on",
         desc = "Turns texts, sounds and chat messages on or off. The history keeps recording."})
-    form:Select({label = "Preset", keys = L.PresetKeys,
+    form:Select({label = "Preset", anchor = "preset", keys = L.PresetKeys,
         desc = "Sets animations, sizes and sounds in one step. Texts, positions and sound choices stay.",
         options = {{"minimal", "Minimal"}, {"standard", "Standard"}, {"action", "Action"}, {"custom", "Custom"}},
         get = function() return L.PresetOf(app.db) end,

@@ -49,7 +49,7 @@ function Page.Build(view, form)
     form:Toggle({key = "streakSound", label = "Play sound"})
     form:Slider({key = "streakWindow", label = "Time until the streak ends", desc = "Every kill starts this time again.",
         min = 2, max = 30, step = 1, format = "%d s"})
-    form:Input({label = "Kills per step", advanced = true, width = 260, keys = {"streakSteps"},
+    form:Input({label = "Kills per step", anchor = "streakSteps", advanced = true, width = 260, keys = {"streakSteps"},
         desc = "Line 1 of the streak texts applies from the first number, line 2 from the second.",
         get = function() return NS.Logic.StreakStepsText(app.db) end,
         set = function(value)

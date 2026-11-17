@@ -1,5 +1,5 @@
 local _, NS = ...
-local T, I = NS.Theme, NS.Locale
+local T, K, I = NS.Theme, NS.Kit, NS.Locale
 local function tr(value) return I.Text(value) end
 -- Draggable position marker for the fixed text positions (shared, crit, heal, kill, streak, proc).
 -- Saving always goes through app:Changed(); the profile root in ZenialCritDB is never replaced here.
@@ -9,9 +9,8 @@ NS.UIAnchor = Anchor
 local KINDS = {shared = "Shared position", crit = "Crit", heal = "Heal crit", kill = "Kill", streak = "Kill streak", proc = "Proc"}
 Anchor.Kinds = KINDS
 
-function Anchor.Define(ctx)
-    local app, api, view = ctx.app, ctx.api, ctx.view
-    local label, closePopups = ctx.kit.label, ctx.kit.closePopups
+function Anchor.Define(view)
+    local app, api = view.app, view.api
 
     local function currentPosition(kind)
         if kind == "shared" then return app.db.x, app.db.y end
@@ -39,7 +38,8 @@ function Anchor.Define(ctx)
             marker:SetSize(250, 72); marker:SetClampedToScreen(true); marker:SetFrameStrata("TOOLTIP"); marker:SetMovable(true)
             marker:EnableMouse(true); marker:RegisterForDrag("LeftButton")
             if T then T.Panel(marker, "raised") end
-            self.anchorTitle = label(marker, "", 16, -28, 220, "GameFontNormal", "gold")
+            self.anchorTitle = K.Text(marker, "", "heading", "gold")
+            self.anchorTitle:SetPoint("TOPLEFT", 16, -28); self.anchorTitle:SetWidth(220)
             self.anchorTitle:SetJustifyH("CENTER")
             marker:SetScript("OnDragStart", function(frame) frame:StartMoving() end)
             marker:SetScript("OnDragStop", function(frame)
@@ -62,7 +62,7 @@ function Anchor.Define(ctx)
     end
 
     function view:CloseAnchor()
-        closePopups()
+        if NS.Form and NS.Form.ClosePopups then NS.Form.ClosePopups() end
         if self.anchor and self.anchor:IsShown() then self.anchor:Hide() end
     end
 end

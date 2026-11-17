@@ -1,5 +1,6 @@
 local _, NS = ...
-local T, I = NS.Theme, NS.Locale
+local T, K, I = NS.Theme, NS.Kit, NS.Locale
+local Form = NS.Form
 local function tr(value) return I.Text(value) end
 -- Procs page: own spell triggers, class hint and the recording of the ZenialDevLogger.
 local Page = {}
@@ -27,7 +28,7 @@ local function triggerText(name)
     if type(name) ~= "string" then return "PROC!" end
     name = name:gsub("%c", ""):match("^%s*(.-)%s*$")
     if name == "" then return "PROC!" end
-    return truncate(NS.UIForm.Upper(name), MAX_TEXT - 1) .. "!"
+    return truncate(Form.Upper(name), MAX_TEXT - 1) .. "!"
 end
 Page.TriggerText = triggerText
 
@@ -49,9 +50,8 @@ local function signature(list)
     return table.concat(parts, ";")
 end
 
-function Page.Build(view, form)
+function Page.Build(view, form, page)
     local app, api = view.app, view.api
-    local page = view.pages.procs
     local work, workProfile          -- working copy: unfinished rows live only here
     local rowFrames = {}
     view.procRowFrames = rowFrames
@@ -108,33 +108,34 @@ function Page.Build(view, form)
 
     form:Card("Own triggers")
     form:Note({text = "Shows a text when you cast the spell with this ID."})
-    local list = form:Custom({keys = {"procTriggers"},
+    local list = form:Custom({anchor = "procTriggers", keys = {"procTriggers"},
         height = function() return math.max(8, #ensure() * ROW + 4) end,
         refresh = function(frame)
             local entries = ensure()
-            local kit = view.kit
             local seen = {}
             for index, item in ipairs(entries) do
                 local rf = rowFrames[index]
                 if not rf then
                     rf = api:Frame("Frame", nil, frame)
-                    rf:SetSize(608, ROW)
+                    rf:SetHeight(ROW)
                     rf.check = api:Frame("CheckButton", nil, rf, "UICheckButtonTemplate")
                     rf.check:SetSize(24, 24); rf.check:SetPoint("TOPLEFT", 0, -5)
                     if T then T.StyleCheckbox(rf.check) end
                     rf.check:SetScript("OnClick", function(box)
                         work[rf.index].enabled = box:GetChecked() == true; commit()
                     end)
-                    rf.id = kit.editBox(rf, 30, -5, 80, 24, false); rf.id:SetMaxLetters(7)
-                    rf.spell = kit.label(rf, "", 118, -10, 130, "GameFontHighlightSmall", "muted")
-                    rf.spell:SetHeight(14)
-                    rf.text = kit.editBox(rf, 252, -5, 200, 24, false); rf.text:SetMaxLetters(MAX_TEXT)
-                    rf.remove = kit.button(rf, "Remove", 462, -4, 100, function()
+                    rf.id = Form.Edit(rf, {width = 80, maxLetters = 7, tr = tr})
+                    rf.id:SetPoint("TOPLEFT", rf, "TOPLEFT", 30, -5)
+                    rf.spell = K.Text(rf, "", "caption", "muted")
+                    rf.spell:SetPoint("TOPLEFT", rf, "TOPLEFT", 118, -11); rf.spell:SetSize(130, 14)
+                    rf.text = Form.Edit(rf, {width = 200, maxLetters = MAX_TEXT, tr = tr})
+                    rf.text:SetPoint("TOPLEFT", rf, "TOPLEFT", 252, -5); rf.text:SetPoint("TOPRIGHT", rf, "TOPRIGHT", -110, -5)
+                    rf.remove = T.Button(rf, tr("Remove"), 100, 26, function()
                         -- A field of the list may still hold focus: it saves first, never after the removal.
                         releaseFields()
                         if work[rf.index] then table.remove(work, rf.index); commit() end
-                    end)
-                    rf.remove:SetHeight(26)
+                    end, "secondary")
+                    rf.remove:SetPoint("TOPRIGHT", rf, "TOPRIGHT", 0, -4)
                     for _, edit in ipairs({rf.id, rf.text}) do
                         edit:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
                         edit:SetScript("OnEditFocusLost", function()
@@ -147,7 +148,8 @@ function Page.Build(view, form)
                     rowFrames[index] = rf
                 end
                 rf.index = index
-                rf:ClearAllPoints(); rf:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(index - 1) * ROW)
+                rf:ClearAllPoints()
+                rf:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(index - 1) * ROW); rf:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -(index - 1) * ROW)
                 rf.check:SetChecked(item.enabled ~= false)
                 if not rf.id:HasFocus() then rf.id:SetText(item.idText or "") end
                 if not rf.text:HasFocus() then rf.text:SetText(item.text or "") end
@@ -197,22 +199,22 @@ function Page.Build(view, form)
     local spellList = form:Custom({visible = function() return #spellLog.list > 0 end,
         height = function() return #spellLog.list * ROW + 4 end,
         refresh = function(frame)
-            local kit = view.kit
             for index, entry in ipairs(spellLog.list) do
                 local rf = spellRows[index]
                 if not rf then
                     rf = api:Frame("Frame", nil, frame)
-                    rf:SetSize(608, ROW)
-                    rf.name = kit.label(rf, "", 0, -10, 230, "GameFontHighlightSmall")
-                    rf.name:SetHeight(14)
-                    rf.info = kit.label(rf, "", 240, -10, 210, "GameFontHighlightSmall", "muted")
-                    rf.info:SetHeight(14)
-                    rf.use = kit.button(rf, "Use", 462, -4, 140, function() if rf.spellID then useSpell(rf.spellID) end end)
-                    rf.use:SetHeight(26)
+                    rf:SetHeight(ROW)
+                    rf.name = K.Text(rf, "", "caption", "text")
+                    rf.name:SetPoint("TOPLEFT", rf, "TOPLEFT", 0, -11); rf.name:SetSize(230, 14)
+                    rf.info = K.Text(rf, "", "caption", "muted")
+                    rf.info:SetPoint("TOPLEFT", rf, "TOPLEFT", 240, -11); rf.info:SetSize(210, 14)
+                    rf.use = T.Button(rf, tr("Use"), 140, 26, function() if rf.spellID then useSpell(rf.spellID) end end, "secondary")
+                    rf.use:SetPoint("TOPRIGHT", rf, "TOPRIGHT", 0, -4)
                     spellRows[index] = rf
                 end
                 rf.index, rf.spellID = index, entry.id
-                rf:ClearAllPoints(); rf:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(index - 1) * ROW)
+                rf:ClearAllPoints()
+                rf:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -(index - 1) * ROW); rf:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -(index - 1) * ROW)
                 rf.name:SetText(api:SpellName(entry.id) or tr("Unknown spell"))
                 -- An entry that was never cast is a possible proc: a trigger works for cast spells only.
                 local cast = (entry.casts or 0) > 0
@@ -307,7 +309,7 @@ function Page.Build(view, form)
     end
     local function attach()
         elapsedTotal = 0
-        ticker:SetScript("OnUpdate", (running() or spellLog.active) and view.page == "procs" and onUpdate or nil)
+        ticker:SetScript("OnUpdate", (running() or spellLog.active) and view:CurrentPage() == "procs" and onUpdate or nil)
     end
     page.afterRefresh = attach
     page.onHide = function() ticker:SetScript("OnUpdate", nil) end

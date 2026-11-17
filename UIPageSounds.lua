@@ -15,7 +15,7 @@ local ENABLE_KEYS = {
 }
 Page.ChannelKeys, Page.EnableKeys = CHANNEL_KEYS, ENABLE_KEYS
 
-function Page.Build(view, form)
+function Page.Build(view, form, page)
     local app, api = view.app, view.api
     local S = NS.Sounds
     local function keys() return S.CategoryKeys[view.soundCategory] end
@@ -31,9 +31,9 @@ function Page.Build(view, form)
     form:Card("Sound")
     local options = {}
     for _, entry in ipairs(NS.UISounds.Categories) do options[#options + 1] = {entry[1], entry[2]} end
-    form:Select({label = "Event", options = options, keys = resetKeys,
+    form:Select({label = "Event", anchor = "soundEvent", options = options, keys = resetKeys,
         get = function() return view.soundCategory end, set = function(value) view.soundCategory = value end})
-    form:Select({label = "Sound", translate = false, visible = function() return not mixed() end,
+    form:Select({label = "Sound", anchor = "sound", translate = false, visible = function() return not mixed() end,
         options = function()
             local list, current = {}, app.db[keys().ids] and app.db[keys().ids][1]
             local found = false
@@ -69,15 +69,16 @@ function Page.Build(view, form)
     form:Note({tone = "warning", text = function()
         return app.db[ENABLE_KEYS[view.soundCategory]] == false and "This sound is off on the Events page." or ""
     end})
-    form:Toggle({label = "Random mix of several sounds", advanced = true, desc = "You pick the sounds in the library below.",
+    form:Toggle({label = "Random mix of several sounds", anchor = "mix", advanced = true, desc = "You pick the sounds in the library below.",
         get = function() return mixed() end,
         set = function(value)
             app.db[keys().mode] = value and "mix" or "single"
             if not value and #app.db[keys().ids] > 1 then app.db[keys().ids] = {app.db[keys().ids][1]} end
         end})
-    form:Select({label = "Volume slider", advanced = true, translate = true,
+    form:Select({label = "Volume slider", anchor = "channel", advanced = true, translate = true,
         desc = "The game has no volume per sound. This picks which slider of the game applies.",
         options = {{"Master", "Master"}, {"SFX", "SFX"}, {"Dialog", "Dialog"}},
+        default = function() return form.ctx.default(CHANNEL_KEYS[view.soundCategory]) end,
         get = function() return NS.Logic.SoundChannel(app.db, view.soundCategory) end,
         set = function(value) app.db[CHANNEL_KEYS[view.soundCategory]] = value end})
 
@@ -86,7 +87,7 @@ function Page.Build(view, form)
         min = 0, max = 30, step = .25, format = "%.2f s"})
 
     form:Card("Library")
-    form:Custom({advanced = true, height = NS.UISounds.LibraryHeight,
-        build = function(frame) NS.UISounds.BuildLibrary(view.ctx, frame) end,
-        refresh = function() view:RefreshSounds() end})
+    form:Custom({advanced = true, anchor = "library", height = NS.UISounds.LibraryHeight,
+        build = function(frame, width) NS.UISounds.BuildLibrary(view, frame, width) end,
+        refresh = function(_, width) NS.UISounds.FitLibrary(view, width); view:RefreshSounds() end})
 end
