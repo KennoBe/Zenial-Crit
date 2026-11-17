@@ -1,15 +1,15 @@
--- Design tokens of ZENIAL Crit ("Obsidian & Gold").
--- Adapted copy of ZENIAL Community's ThemeTokens.lua (Community commit c8d6f33). The palette,
--- spacing, type and metric values are meant to stay identical to Community; change them there first.
--- Loaded after the shared Theme.lua and before ThemeSkin.lua. This file re-points the named palette of
--- Crit's own Theme table and adds the scales every Crit surface reads. No frames are created here.
+-- Design tokens of the shared ZENIAL design ("Obsidian & Gold").
+-- Shared source: canonical in _dev/shared/, copied byte-identically into every addon by
+-- _dev/tools/sync_shared.py. Do not edit the copies. Loaded after the shared Theme.lua and before
+-- ThemeSkin.lua; it re-points the named palette and adds the spacing, type and metric scales every
+-- surface reads. No frames are created here.
 --
--- Rules for later changes:
+-- Rules for later changes (see _dev/shared/README.md):
 --   * a colour is a palette key, never a literal in a UI file;
 --   * a distance is T.space.*, a text size is T.type.*, a shell size is T.metrics.*.
-local _, NS = ...
-local T = NS and NS.Theme
-if type(T) ~= "table" or type(T.palette) ~= "table" or type(T.PaletteColor) ~= "function" then return end
+local addonName, private = ...
+local T = type(private) == "table" and private.Theme or nil
+if type(addonName) ~= "string" or type(T) ~= "table" or type(T.palette) ~= "table" or type(T.PaletteColor) ~= "function" then return end
 
 local function hex(value, alpha)
     local r, g, b = value:match("^#?(%x%x)(%x%x)(%x%x)$")
@@ -82,7 +82,10 @@ T.type = {
     value = { size = 22, color = "text" },      -- large numbers in stat tiles
 }
 
--- Shell geometry (unscaled window pixels). window layout code reads these.
+-- Palette key per group role, wherever a role is written out in colour.
+T.roleColors = { TANK = "accentBlue", HEALER = "success", DAMAGER = "dangerText" }
+
+-- Shell geometry (unscaled window pixels). UXLayout.lua reads these.
 T.metrics = {
     sidebar = 180, sidebarCompact = 150,   -- full-height navigation column
     brand = 64,                            -- logo block at the top of the sidebar
@@ -110,9 +113,9 @@ function T.Font(fontString, role, colorKey)
 end
 
 -- ---------------------------------------------------------------------------------------------
--- Icon atlas (Media/Icons.tga, 8 x 4 cells; copy of the Community atlas)
+-- Icon atlas (Media/Icons.tga, 8 x 4 cells; drawn by _dev/tools/generate_community_icons.py)
 -- ---------------------------------------------------------------------------------------------
-T.assets.iconAtlas = "Interface\\AddOns\\ZenialCrit\\Media\\Icons.tga"
+T.assets.iconAtlas = "Interface\\AddOns\\" .. addonName .. "\\Media\\Icons.tga"
 T.iconCells = { today = 0, activities = 1, quests = 2, members = 3, craft = 4, trade = 5, characters = 6, addons = 7,
     settings = 8, bell = 9, pvp = 10, discord = 11, search = 12, plus = 13, close = 14, check = 15,
     chevronRight = 16, chevronDown = 17, star = 18, clock = 19, calendar = 20, filter = 21, refresh = 22, whisper = 23,
@@ -138,4 +141,4 @@ function T.IconSpec(name)
     return { file = T.assets.iconAtlas, texCoord = { column / 8, (column + 1) / 8, row / 4, (row + 1) / 4 } }
 end
 
-NS.ThemeTokensLoaded = true
+private.ThemeTokensLoaded = true

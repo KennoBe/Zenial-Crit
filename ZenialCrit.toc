@@ -17,6 +17,7 @@ Locale.lua
 Theme.lua
 ThemeTokens.lua
 ThemeSkin.lua
+ThemeKit.lua
 Adapter.lua
 Effects.lua
 UIKit.lua

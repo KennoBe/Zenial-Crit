@@ -1,13 +1,11 @@
--- Flat "Obsidian & Gold" skin of ZENIAL Crit, layered on Crit's own Theme table (Theme.lua + ThemeTokens.lua).
--- Adapted copy of ZENIAL Community's ThemeCommunity.lua (Community commit c8d6f33); the skin functions
--- behave the same, the values should stay in step with Community. Left out: the Community navigation and
--- profession icons, which point at media Crit does not ship.
-local _, NS = ...
-local T = NS and NS.Theme
-if type(T) ~= "table" or type(T.assets) ~= "table" then return end
+-- Shared ZENIAL skin. Shared source: canonical in _dev/shared/, copied byte-identically into every
+-- addon by _dev/tools/sync_shared.py. Do not edit the copies. Loaded after Theme.lua and ThemeTokens.lua.
+local addonName, private = ...
+local T = type(private) == "table" and private.Theme or nil
+if type(addonName) ~= "string" or type(T) ~= "table" or type(T.assets) ~= "table" then return end
 
 -- ---------------------------------------------------------------------------------------------
--- Skin. Redraws the shared widgets (shell, panels, buttons, navigation, rows, inputs) with
+-- Community skin. Redraws the shared widgets (shell, panels, buttons, navigation, rows, inputs) with
 -- the named palette of the shared Theme so every page inherits the new look. All colours below are
 -- palette keys; a different hue is a change to T.palette only. Newer client APIs (SetGradient,
 -- AnimationGroup, CreateFont, SetBlendMode) are probed and each has a static fallback.
@@ -160,7 +158,7 @@ end
 local fontObjects = {}
 local function fontObject(colorKey, size)
     if type(CreateFont) ~= "function" then return nil end
-    local id = "ZenialCritFont" .. colorKey .. tostring(size)
+    local id = addonName .. "Font" .. colorKey .. tostring(size)
     if fontObjects[id] == nil then
         local ok, font = pcall(CreateFont, id)
         fontObjects[id] = false
@@ -749,4 +747,4 @@ function T.CreateToast(parent)
     return toast
 end
 
-NS.ThemeSkinLoaded = true
+private.ThemeSkinLoaded = true
