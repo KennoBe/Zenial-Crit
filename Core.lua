@@ -12,7 +12,7 @@ local frame = api:Frame()
 if not frame then return end
 app.frame = frame
 
-local VERSION = "2.2.0"
+local VERSION = "2.2.1"
 app.version = VERSION
 
 -- Config used before login (damage font): the profile of this character, else root.last, else "Standard",
