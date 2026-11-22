@@ -262,10 +262,9 @@ function Page.Build(view, form, page)
         local test = app.root and app.root.procTest
         local counters = type(test) == "table" and test.counters
         if not any() or type(counters) ~= "table" or type(counters.weapon) ~= "table" or type(counters.totem) ~= "table" then return "" end
-        local function rejected(c) return (c.noSwing or 0) + (c.tooSoon or 0) + (c.ownCast or 0) end
         return "Last test: %d swings, weapon %d procs and %d rejected, totem %d procs and %d rejected.",
-            counters.swings or 0, counters.weapon.procs or 0, rejected(counters.weapon),
-            counters.totem.procs or 0, rejected(counters.totem)
+            counters.swings or 0, counters.weapon.procs or 0, app:ProcRejectedCount(counters.weapon),
+            counters.totem.procs or 0, app:ProcRejectedCount(counters.totem)
     end})
 
     form:Card("Recording")
@@ -299,6 +298,30 @@ function Page.Build(view, form, page)
         return "Spells you cast: %s", table.concat(parts, ", ")
     end})
     form:Note({advanced = true, text = function() return summary() and "Type /reload so the recording is saved." or "" end})
+
+    form:Card("Proc cards on nameplates")
+    form:Toggle({key = "procPlateEnabled", label = "Show proc cards on nameplates"})
+    form:Note({text = "In combat, cards require a readable log entry confirming your proc and its target. Protected entries leave the existing proc effects available."})
+    form:Toggle({key = "procPlateWeapon", label = "Windfury of the weapon"})
+    form:Toggle({key = "procPlateTotem", label = "Windfury Totem"})
+    form:Toggle({key = "procPlateIcon", label = "Show proc icon"})
+    form:Toggle({key = "procPlateName", label = "Show proc name"})
+    form:Toggle({key = "procPlateAmounts", label = "Show hit damage"})
+    form:Toggle({key = "procPlateSum", label = "Show total damage",
+        desc = "Available when all hits and damage values are known."})
+    form:Toggle({key = "procPlateGroup", label = "Show the hit count"})
+    form:Toggle({key = "procPlateHighlight", label = "Highlight critical hits"})
+    form:Select({key = "procPlateLayout", label = "Hit layout", options = {{"row", "Row"}, {"column", "Column"}}})
+    form:Slider({key = "procPlateX", label = "Horizontal offset", min = -40, max = 100, step = 1, format = "%d"})
+    form:Slider({key = "procPlateY", label = "Vertical offset", min = -100, max = 100, step = 1, format = "%d"})
+    form:Slider({key = "procPlateSize", label = "Text size", min = 10, max = 22, step = 1, format = "%d"})
+    form:Slider({key = "procPlateScale", label = "Card scale", min = .6, max = 2.5, step = .05, format = "%.2f"})
+    form:Color({key = "procPlateColor", label = "Proc name color", cancelOnLeave = true})
+    form:Select({key = "procPlateAnim", label = "Animation", options = {
+        {"pop", "Pop"}, {"slam", "Slam"}, {"rise", "Rise"}, {"shake", "Shake"}, {"pulse", "Pulse"}, {"fade", "Fade"}}})
+    form:Slider({key = "procPlateDuration", label = "Duration", min = .4, max = 3, step = .05, format = "%.2f s"})
+    form:Slider({key = "procPlateFade", label = "Fade-out time", min = 0, max = 1.5, step = .05, format = "%.2f s"})
+    form:Buttons({{text = "Preview proc card", onClick = function() app:PreviewProcPlate() end}})
 
     -- The status line and the spell list follow a running recording once a second, only while this page is shown.
     local ticker = api:Frame("Frame", nil, form.parent)

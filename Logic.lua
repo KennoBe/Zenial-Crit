@@ -63,6 +63,11 @@ local defaults = {
     procWindfuryWeapon = true, procWindfuryTotem = true, procWindfuryFlash = true,
     procWindfuryWeaponText = "WINDFURY!", procWindfuryTotemText = "WINDFURY TOTEM!",
     windfurySoundMode = "single", windfurySoundIDs = {"thunder"}, windfurySoundChannel = "Master",
+    procPlateEnabled = false, procPlateWeapon = true, procPlateTotem = true, procPlateExtra = true,
+    procPlateIcon = true, procPlateName = true, procPlateAmounts = true, procPlateSum = false,
+    procPlateLayout = "row", procPlateGroup = true, procPlateHighlight = true,
+    procPlateX = 8, procPlateY = 0, procPlateSize = 13, procPlateScale = 1,
+    procPlateColor = {1, .87, .6}, procPlateAnim = "fade", procPlateDuration = 1.4, procPlateFade = .35,
 }
 local bounds = {
     scale = {.6, 2.5}, nameplateScale = {.6, 4.2}, intensity = {1, 3}, soundCooldown = {0, 30},
@@ -72,6 +77,9 @@ local bounds = {
     killX = {-2000, 2000}, killY = {-1200, 1200},
     maxEffects = {1, 6, 1}, stackSpacing = {0, 120}, critGap = {0, 3, .05},
     critMinPercent = {0, 100}, healMinPercent = {0, 100}, streakWindow = {2, 30},
+    procPlateX = {-40, 100, 1}, procPlateY = {-100, 100, 1},
+    procPlateSize = {10, 22, 1}, procPlateScale = {.6, 2.5, .05},
+    procPlateDuration = {.4, 3, .05}, procPlateFade = {0, 1.5, .05},
 }
 
 local kinds = {"crit", "heal", "kill", "streak", "proc"}
@@ -115,6 +123,8 @@ end
 enums.situationWorld, enums.situationDungeon = situationSet, situationSet
 enums.situationRaid, enums.situationPvp = situationSet, situationSet
 enums.streakTargets = targetSet
+colorKeys.procPlateColor = true
+enums.procPlateLayout, enums.procPlateAnim = {row = true, column = true}, animationSet
 
 L.FontStyles = fontStyles
 

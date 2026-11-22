@@ -22,6 +22,7 @@ Form.lua
 Window.lua
 Adapter.lua
 Effects.lua
+NameplateCombat.lua
 UISounds.lua
 UIHistory.lua
 UIAnchor.lua

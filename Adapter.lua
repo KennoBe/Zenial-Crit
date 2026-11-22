@@ -3,7 +3,8 @@ local Adapter = {}
 NS.Adapter = Adapter
 
 function Adapter.New(env)
-    local A = {env = env, handles = {}, nameplateCache = {}, nameplateGenerations = {}, nameplateUnits = {}}
+    local A = {env = env, handles = {}, nameplateCache = {}, nameplateGenerations = {}, nameplateUnits = {},
+        procBindings = {}, procGeneration = 0}
 
     -- Opt-in trace, routed through the DevLogger's bounded, secret-aware encoder.
     function A:Diagnostic(stage, ...)
@@ -178,6 +179,26 @@ function Adapter.New(env)
             return self:Text(spell.GetSpellName, 80, id)
         end
         return self:Text(env.GetSpellInfo, 80, id)
+    end
+
+    function A:ProcCooldown(id, fromEvent)
+        local spells = env.C_Spell
+        if type(spells) ~= "table" or type(spells.GetSpellCooldown) ~= "function" then return nil end
+        local ok, data = pcall(spells.GetSpellCooldown, id)
+        if not ok or not self:Public(data) or type(data) ~= "table" then return nil end
+        if type(env.canaccesstable) == "function" then
+            local checked, allowed = pcall(env.canaccesstable, data)
+            if not checked or not self:Public(allowed) or allowed ~= true then return nil end
+        end
+        local read, active, onGCD = pcall(function()
+            if fromEvent then return data.isActive, data.isOnGCD end
+            return data.isActive
+        end)
+        if not read then return nil end
+        -- false is a readable inactive state; an unreadable field is unknown.
+        if not self:Public(active) or type(active) ~= "boolean" then active = nil end
+        if fromEvent ~= true or not self:Public(onGCD) or type(onGCD) ~= "boolean" then onGCD = nil end
+        return active, onGCD
     end
 
     -- Unit-filtered registration only when the client confirms it with true.
@@ -356,6 +377,8 @@ function Adapter.New(env)
             if self.nameplateTracker then self.nameplateTracker:SetScript("OnUpdate", nil) end
             if self.nameplateTracker then self.nameplateTracker:UnregisterAllEvents() end
             self.nameplateTracking = false
+            self.procLifecycle = false
+            self.procBindings = {}
             self.nameplateCache = {}
             self.nameplateUnits, self.nameplateGenerations, self.pendingPlates = {}, {}, {}
             self.pendingPumpActive = false
@@ -364,18 +387,21 @@ function Adapter.New(env)
         if not self.nameplateTracker then self.nameplateTracker = self:Frame() end
         if not self.nameplateTracker or self.nameplateTracking then return end
         self.nameplateTracking = true
-        self:Register(self.nameplateTracker, "NAME_PLATE_UNIT_ADDED")
-        self:Register(self.nameplateTracker, "NAME_PLATE_UNIT_REMOVED")
+        local added = self:Register(self.nameplateTracker, "NAME_PLATE_UNIT_ADDED")
+        local removed = self:Register(self.nameplateTracker, "NAME_PLATE_UNIT_REMOVED")
+        self.procLifecycle = added and removed
         self.nameplateTracker:SetScript("OnEvent", function(_, event, unit)
             if not self:Public(unit) or type(unit) ~= "string" then return end
             local now = self:Time()
             if event == "NAME_PLATE_UNIT_ADDED" then
+                self.procBindings[unit] = nil
                 self.nameplateGenerations[unit] = (self.nameplateGenerations[unit] or 0) + 1
                 self:ClearPending(unit)
                 local plate = self:GetNameplate(unit)
                 local ok, anchor = pcall(self.RememberNameplate, self, plate, unit, now)
                 if not (ok and anchor) then self:AddPending(plate, unit) end
             else
+                self.procBindings[unit] = false
                 local guid = self.nameplateUnits[unit]
                 local anchor = guid and self.nameplateCache[guid]
                 if not anchor or anchor.unit ~= unit then
@@ -391,8 +417,119 @@ function Adapter.New(env)
                 if anchor then anchor.at, anchor.removed = now or anchor.at, true end
             end
             self:PruneNameplates(now)
+            if self.procPlateChanged then self.procPlateChanged(unit) end
         end)
         self:ScanNameplates()
+    end
+
+    -- The old kill anchor retains a removed plate briefly. Proc cards only use
+    -- visible bindings independently checked against the live native unit.
+    local function activeProcPlate(self, target)
+        if not self.procLifecycle or type(target) ~= "table" then return nil end
+        local unit, guid, plate = target.unit, target.guid, target.plate
+        local generation = self.procBindings[unit]
+        if not generation or generation ~= target.generation then return nil end
+        local binding = self.nameplateCache[guid]
+        if not binding or binding.removed or binding.unit ~= unit or binding.plate ~= plate then return nil end
+        if self:GetNameplate(unit) ~= plate or self:PlateUnit(plate) ~= unit or self:GUID(unit) ~= guid then return nil end
+        local ok, shown = pcall(plate.IsShown, plate)
+        if ok and self:Public(shown) and shown == true then return plate end
+    end
+
+    function A:CaptureProcTarget(token)
+        if not self.procLifecycle then return nil end
+        local guid = self:GUID(token)
+        local plate = self:GetNameplate(token)
+        local unit = self:PlateUnit(plate)
+        if not guid or not unit or not unit:match("^nameplate%d+$") then return nil end
+        local generation = self.procBindings[unit]
+        if generation == false then return nil end
+        if not generation then
+            self.procGeneration = self.procGeneration + 1
+            generation = self.procGeneration
+            self.procBindings[unit] = generation
+        end
+        local target = {unit = unit, guid = guid, plate = plate, generation = generation}
+        if activeProcPlate(self, target) then return target end
+    end
+
+    function A:ProcTargetByGUID(guid)
+        local binding = self.nameplateCache[guid]
+        if binding and not binding.removed then
+            local target = self:CaptureProcTarget(binding.unit)
+            if target and target.guid == guid then return target end
+        end
+    end
+
+    function A:SetProcAnchorListener(listener)
+        self.procPlateChanged = listener
+        local ui = env.ZenialUI
+        local provider = listener and type(ui) == "table" and ui.NameplateAnchor or nil
+        if type(provider) ~= "table" or provider.version ~= 1 or type(provider.Get) ~= "function"
+            or type(provider.Subscribe) ~= "function" or type(provider.Unsubscribe) ~= "function" then
+            provider = nil
+        end
+        if provider == self.procProvider then return end
+        self.procSubscription = nil
+        if self.procProvider then pcall(self.procProvider.Unsubscribe, self.procProviderHandle) end
+        self.procProvider, self.procProviderHandle = nil, nil
+        if provider then
+            local subscription = {}
+            local ok, handle = pcall(provider.Subscribe, function(unit, plate)
+                if self.procSubscription == subscription and self.procPlateChanged
+                    and self:Public(unit) and type(unit) == "string" and accessible(plate) then
+                    self.procPlateChanged(unit, plate)
+                end
+            end)
+            if ok and self:Public(handle) and handle ~= nil then
+                self.procProvider, self.procProviderHandle = provider, handle
+                self.procSubscription = subscription
+            end
+        end
+        if listener then listener() end
+    end
+
+    function A:ResolveProcAnchor(target)
+        local plate = activeProcPlate(self, target)
+        if not plate then return nil end
+        local provider = self.procProvider
+        if provider then
+            local ok, status, anchor, generation = pcall(provider.Get, target.unit, plate)
+            if ok and self:Public(status) then
+                if status == "pending" then return nil, "pending" end
+                if status == "native" then return plate, "native" end
+                if status == "zenial" and accessible(anchor) and self:Public(generation)
+                    and type(generation) == "number" and generation > 0 then
+                    return anchor, "zenial"
+                end
+            end
+            -- A provider can be mid-rebind. Avoid anchoring to hidden native visuals on error.
+            return nil, "pending"
+        end
+        return plate, "native"
+    end
+
+    -- Observe only current, fully public Blizzard lines; never change filters or read the
+    -- secure combat-log state. Public link payloads identify a hit but carry no numeric amount.
+    function A:ProcLogEvidence(text, order)
+        if not self:Public(order) or order ~= 0 then return nil, "not_live" end
+        if not self:Public(text) or type(text) ~= "string" or #text > 4096
+            or text:find("|K", 1, true) then return nil, "unreadable" end
+        local id, event = text:match("|Hspell:(%d+):%d+:([A-Z_]+)|h")
+        -- SPELL_EXTRA_ATTACKS grants attacks and does not identify the victim of a hit.
+        if not id or event ~= "SPELL_DAMAGE" then return nil end
+        local _, spellLinks = text:gsub("|Hspell:", "")
+        if spellLinks ~= 1 then return nil, "ambiguous_hit" end
+        id = tonumber(id)
+        local family = NS.Procs.Family[id]
+        if not family then return nil end
+        local links = text:gmatch("|Hunit:([^:|]+):[^|]*|h")
+        local source, victim = links(), links()
+        if not source or not victim or links() then return nil, "source_unknown" end
+        if source ~= self:GUID("player") then return nil, "source_unknown" end
+        local target = self:ProcTargetByGUID(victim)
+        if not target then return nil, "target_changed" end
+        return {family = family, targetRef = target, spellID = id, unkeyed = true}
     end
 
     function A:NameplateContext(victimGUID)
