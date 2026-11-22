@@ -20,7 +20,11 @@ local function content(api, result, family, config)
     local count = result.hitCount
     if not api:Public(count) or not finite(count) or count < 1 or count % 1 ~= 0 then count = 0 end
     local complete = result.complete == true
-    local title = config.procPlateName and tr(family.name) or ""
+    local title = ""
+    if config.procPlateName then
+        local spellName = family == families.extra and api:SpellName(result.spellID)
+        title = spellName or tr(family.name)
+    end
     if config.procPlateGroup and complete and count > 1 then
         title = (title ~= "" and title .. " " or "") .. "×" .. count
     end

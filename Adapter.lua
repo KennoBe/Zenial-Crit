@@ -172,6 +172,13 @@ function Adapter.New(env)
         return nil
     end
 
+    function A:IsOwnCombatText()
+        local combatText = env.C_CombatText
+        if type(combatText) ~= "table" or type(combatText.GetActiveUnit) ~= "function" then return false end
+        local ok, unit = pcall(combatText.GetActiveUnit)
+        return ok and self:Public(unit) and unit == "player"
+    end
+
     function A:SpellName(id)
         if not self:Public(id) or type(id) ~= "number" then return nil end
         local spell = env.C_Spell
@@ -429,9 +436,11 @@ function Adapter.New(env)
         local unit, guid, plate = target.unit, target.guid, target.plate
         local generation = self.procBindings[unit]
         if not generation or generation ~= target.generation then return nil end
-        local binding = self.nameplateCache[guid]
-        if not binding or binding.removed or binding.unit ~= unit or binding.plate ~= plate then return nil end
-        if self:GetNameplate(unit) ~= plate or self:PlateUnit(plate) ~= unit or self:GUID(unit) ~= guid then return nil end
+        if guid then
+            local binding = self.nameplateCache[guid]
+            if not binding or binding.removed or binding.unit ~= unit or binding.plate ~= plate or self:GUID(unit) ~= guid then return nil end
+        end
+        if self:GetNameplate(unit) ~= plate or self:PlateUnit(plate) ~= unit then return nil end
         local ok, shown = pcall(plate.IsShown, plate)
         if ok and self:Public(shown) and shown == true then return plate end
     end
@@ -441,7 +450,9 @@ function Adapter.New(env)
         local guid = self:GUID(token)
         local plate = self:GetNameplate(token)
         local unit = self:PlateUnit(plate)
-        if not guid or not unit or not unit:match("^nameplate%d+$") then return nil end
+        -- The hard target can be matched to a native binding even with a protected GUID.
+        -- A combat-log victim still requires a readable GUID via ProcTargetByGUID.
+        if (not guid and token ~= "target") or not unit or not unit:match("^nameplate%d+$") then return nil end
         local generation = self.procBindings[unit]
         if generation == false then return nil end
         if not generation then
@@ -451,6 +462,21 @@ function Adapter.New(env)
         end
         local target = {unit = unit, guid = guid, plate = plate, generation = generation}
         if activeProcPlate(self, target) then return target end
+    end
+
+    function A:CaptureAttackTarget()
+        local target = self:CaptureProcTarget("target")
+        if not target then return nil end
+        -- PLAYER_SWING does not identify a victim. A different soft target makes the hard target ambiguous.
+        local softGUID = self:GUID("softenemy")
+        if softGUID and target.guid and softGUID ~= target.guid then return nil end
+        local softPlate = self:GetNameplate("softenemy")
+        if softGUID and not target.guid and not softPlate then return nil end
+        if softPlate and softPlate ~= target.plate then
+            local ok, shown = pcall(softPlate.IsShown, softPlate)
+            if not ok or not self:Public(shown) or shown ~= false then return nil end
+        end
+        return target
     end
 
     function A:ProcTargetByGUID(guid)
@@ -510,18 +536,24 @@ function Adapter.New(env)
     end
 
     -- Observe only current, fully public Blizzard lines; never change filters or read the
-    -- secure combat-log state. Public link payloads identify a hit but carry no numeric amount.
+    -- secure combat-log state. Public link payloads can identify a hit or a grant.
     function A:ProcLogEvidence(text, order)
         if not self:Public(order) or order ~= 0 then return nil, "not_live" end
         if not self:Public(text) or type(text) ~= "string" or #text > 4096
             or text:find("|K", 1, true) then return nil, "unreadable" end
-        local id, event = text:match("|Hspell:(%d+):%d+:([A-Z_]+)|h")
-        -- SPELL_EXTRA_ATTACKS grants attacks and does not identify the victim of a hit.
-        if not id or event ~= "SPELL_DAMAGE" then return nil end
+        local spellStart, _, id, event = text:find("|Hspell:(%d+):%d+:([A-Z_]+)|h")
+        if not id or (event ~= "SPELL_DAMAGE" and event ~= "SPELL_EXTRA_ATTACKS") then return nil end
         local _, spellLinks = text:gsub("|Hspell:", "")
         if spellLinks ~= 1 then return nil, "ambiguous_hit" end
         id = tonumber(id)
         local family = NS.Procs.Family[id]
+        if event == "SPELL_EXTRA_ATTACKS" then
+            if not id or id <= 0 or id >= math.huge then return nil end
+            local sources = text:sub(1, spellStart - 1):gmatch("|Hunit:([^:|]+):[^|]*|h")
+            local source = sources()
+            if not source or sources() or source ~= self:GUID("player") then return nil, "source_unknown" end
+            return {grant = true, spellID = id, family = family or "extra"}
+        end
         if not family then return nil end
         local links = text:gmatch("|Hunit:([^:|]+):[^|]*|h")
         local source, victim = links(), links()

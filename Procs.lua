@@ -19,6 +19,7 @@ local WEAPON_GAP, TOTEM_GAP, CAST_GUARD = P.WEAPON_GAP, P.TOTEM_GAP, P.CAST_GUAR
 local STORMSTRIKE = P.STORMSTRIKE
 local MAX_OPEN, MAX_ANCHORS, MAX_SEEN = 8, 8, 64
 local EPSILON = 1e-9
+local EXTRA_GAP, EXTRA_MIN_PERIOD, EXTRA_GRACE = .45, 1, .25
 
 -- spell ID -> family; the only table the event handler touches for a foreign ID.
 local family = {}
@@ -67,6 +68,7 @@ function P.NewState()
         finalized = {},
         seen = {},
         unkeyed = {},
+        targetRevision = 0,
         nextID = 0,
     }
 end
@@ -96,6 +98,20 @@ local function sameTarget(left, right)
         and left.guid == right.guid and left.generation == right.generation
 end
 
+local function claimUnkeyed(state, family, target, now)
+    for index = #state.unkeyed, 1, -1 do
+        local entry = state.unkeyed[index]
+        if entry.untilAt <= now then
+            table.remove(state.unkeyed, index)
+        elseif entry.family == family and sameTarget(entry.targetRef, target) then
+            return "duplicate"
+        end
+    end
+    if #state.unkeyed >= MAX_SEEN then return "queue_full" end
+    local gap = family == "weapon" and WEAPON_GAP or family == "totem" and TOTEM_GAP or TOTEM_LAG
+    state.unkeyed[#state.unkeyed + 1] = {family = family, targetRef = target, untilAt = now + gap}
+end
+
 local function queueDecision(state, fam, result, reason, lag)
     if #state.decisions < MAX_OPEN * 2 then
         state.decisions[#state.decisions + 1] = {fam, result, reason, lag}
@@ -115,6 +131,7 @@ local function addCandidate(state, fam, cooldown)
             else
                 state.candidates[#state.candidates + 1] = {
                     family = fam, at = cooldown.at, deadline = cooldown.at + lag, edge = cooldown.edge,
+                    spellID = cooldown.spellID, targetRef = cooldown.targetRef, revision = cooldown.revision,
                 }
             end
             return
@@ -181,6 +198,63 @@ local function due(at, now, inclusive)
     return at < now or inclusive and at == now
 end
 
+-- A recognized own proc may display its name on an unchanged attack target.
+-- Only independently attributed hits can supply numbers or a hit count.
+local function fallbackTarget(state, candidate)
+    local target = candidate.targetRef
+    if not target or candidate.revision ~= state.targetRevision then return nil end
+    local lag = window(candidate.family)
+    if state.droppedAnchorAt and state.droppedAnchorAt >= candidate.at - lag - EPSILON then return nil end
+    local cast = state.castAt[candidate.spellID]
+    if cast and cast >= candidate.at - CAST_GUARD and cast <= candidate.deadline then return nil end
+    local found = false
+    for _, anchor in ipairs(state.anchors) do
+        if anchorFits(anchor.at, candidate.at, lag) then
+            if anchor.revision ~= candidate.revision or not anchor.targetRef or not sameTarget(anchor.targetRef, target) then
+                return nil
+            end
+            found = true
+        end
+    end
+    if not found then return nil end
+    for _, observation in ipairs(state.evidence) do
+        if observation.family == candidate.family and observation.direct
+            and observation.at >= candidate.at - SWING_LEAD - EPSILON and observation.at <= candidate.deadline + EPSILON then
+            return nil -- Let explicit source and victim evidence decide where to show a card.
+        end
+    end
+    return target
+end
+
+local function settleExtra(state, now)
+    local grant = state.extraGrant
+    if not grant or now < grant.deadline then return end
+    state.extraGrant = nil
+    if grant.revision ~= state.targetRevision then return end
+    if state.droppedAnchorAt and state.droppedAnchorAt >= grant.at - EXTRA_GAP then return end
+
+    -- Source-specific signals take precedence over the generic combat-text notification.
+    local windfury = math.max(state.lastProc.weapon or -math.huge, state.lastProc.totem or -math.huge,
+        state.windfuryGrantAt or -math.huge)
+    if windfury >= grant.at - EXTRA_GAP and windfury <= grant.deadline then return end
+
+    local previous
+    for _, anchor in ipairs(state.anchors) do
+        if anchor.period and anchor.at >= grant.at - EXTRA_GAP and anchor.at <= grant.at + EXTRA_GAP then
+            if anchor.revision ~= grant.revision or not anchor.targetRef or not sameTarget(anchor.targetRef, grant.targetRef) then
+                return
+            end
+            if previous and previous.period >= EXTRA_MIN_PERIOD and anchor.at >= previous.at
+                and anchor.at - previous.at <= EXTRA_GAP then grant.paired = true end
+            previous = anchor
+        end
+    end
+    if grant.paired and not claimUnkeyed(state, "extra", grant.targetRef, grant.at) then
+        publish(state, {family = "extra", triggerAt = grant.at, targetRef = grant.targetRef,
+            spellID = grant.spellID, hits = {}, complete = false, confidence = "attack_target"})
+    end
+end
+
 local function expireRecords(state, now, inclusive)
     local ready = {}
     for _, candidate in ipairs(state.candidates) do
@@ -245,7 +319,7 @@ local function expireRecords(state, now, inclusive)
             retained[#retained + 1] = observation
         end
     end
-    state.evidence = retained
+    local pendingEvidence = retained
     retained = {}
     for _, candidate in ipairs(state.candidates) do
         if ready[candidate] then
@@ -253,11 +327,18 @@ local function expireRecords(state, now, inclusive)
             if group and group.hits then
                 group.direct = nil
                 publish(state, group)
+            else
+                local target = fallbackTarget(state, candidate)
+                if target and not claimUnkeyed(state, candidate.family, target, candidate.at) then
+                    publish(state, {family = candidate.family, triggerAt = candidate.at,
+                        targetRef = target, hits = {}, complete = false, confidence = "attack_target"})
+                end
             end
         else
             retained[#retained + 1] = candidate
         end
     end
+    state.evidence = pendingEvidence
     state.candidates = retained
 end
 
@@ -272,7 +353,7 @@ function P.DrainFinal(state)
 end
 
 function P.Deadline(state)
-    local at = math.huge
+    local at = state.extraGrant and state.extraGrant.deadline or math.huge
     for _, candidate in pairs(state.pending) do at = math.min(at, candidate.at + SWING_LEAD + EPSILON) end
     for _, candidate in ipairs(state.candidates) do at = math.min(at, candidate.deadline) end
     for _, observation in ipairs(state.evidence) do at = math.min(at, observation.deadline) end
@@ -288,6 +369,7 @@ function P.Expire(state, now)
         end
     end
     expireRecords(state, now, true)
+    settleExtra(state, now)
 end
 
 -- The first legacy decision is returned directly; any simultaneous decision waits in Drain.
@@ -318,21 +400,44 @@ function P.Settle(state)
     return settle(state, 0, false)
 end
 
-local function addAnchor(state, now, targetRef)
+local function addAnchor(state, now, targetRef, period)
     expireRecords(state, now, false)
     state.anchorAt = math.max(state.anchorAt or now, now)
     if #state.anchors >= MAX_ANCHORS then
         local dropped = table.remove(state.anchors, 1)
         state.droppedAnchorAt = math.max(state.droppedAnchorAt or dropped.at, dropped.at)
     end
-    state.anchors[#state.anchors + 1] = {at = now, targetRef = targetSnapshot(targetRef)}
+    state.anchors[#state.anchors + 1] = {at = now, targetRef = targetSnapshot(targetRef), revision = state.targetRevision,
+        period = period}
     return settle(state, now, true)
 end
 
+function P.OnTargetChanged(state)
+    state.targetRevision = state.targetRevision + 1
+end
+
 -- hand 0 = main hand. Anything else (ranged 2, off hand) is no anchor.
-function P.OnSwing(state, now, hand, targetRef)
+function P.OnSwing(state, now, hand, targetRef, period)
     if hand ~= 0 then return nil end
-    return addAnchor(state, now, targetRef)
+    return addAnchor(state, now, targetRef, finite(period) and period or nil)
+end
+
+function P.OnExtraAttack(state, now, family, targetRef, spellID)
+    if family ~= "extra" then
+        state.windfuryGrantAt = now
+        return
+    end
+    local target = targetSnapshot(targetRef)
+    if not target then return end
+    settleExtra(state, now)
+    local grant = state.extraGrant
+    if grant and grant.revision == state.targetRevision and sameTarget(grant.targetRef, target) then
+        if spellID and grant.spellID and spellID ~= grant.spellID then grant.mixed = true end
+        if grant.mixed then grant.spellID = nil elseif spellID then grant.spellID = spellID end
+        return
+    end
+    state.extraGrant = {at = now, deadline = now + EXTRA_GAP + EXTRA_GRACE, targetRef = target,
+        spellID = spellID, revision = state.targetRevision}
 end
 
 -- Stormstrike is an anchor like a swing; an own totem cast is remembered per ID.
@@ -371,7 +476,7 @@ local function cooldownRejection(state, now, spellID, active, onGCD)
     return nil, active == true and onGCD == false and previous ~= nil and previous.active == false
 end
 
-function P.OnCooldown(state, now, spellID, watchWeapon, watchTotem, active, onGCD)
+function P.OnCooldown(state, now, spellID, watchWeapon, watchTotem, active, onGCD, targetRef)
     local fam = family[spellID]
     if not fam then return nil end
     local watched = fam == "weapon" and watchWeapon or fam == "totem" and watchTotem
@@ -397,7 +502,8 @@ function P.OnCooldown(state, now, spellID, watchWeapon, watchTotem, active, onGC
     if last and now >= last and now - last < gap then return fam, "rejected", "too_soon", nil end
     local anchor = state.anchorAt
     local lag = anchor and now - anchor
-    local cooldown = {at = now, spellID = spellID, edge = edge}
+    local cooldown = {at = now, spellID = spellID, edge = edge,
+        targetRef = targetSnapshot(targetRef), revision = state.targetRevision}
     if lag and lag >= 0 and lag <= window(fam) then
         state.lastProc[fam] = now
         addCandidate(state, fam, cooldown)
@@ -433,22 +539,13 @@ function P.OnEvidence(state, now, evidence)
     if #state.evidence + #state.candidates >= MAX_OPEN or count >= MAX_SEEN then
         return fam, "rejected", "queue_full", nil
     end
-    if eventID ~= nil then state.seen[eventID] = now + WEAPON_GAP end
     if evidence.unkeyed == true then
         -- A public formatted line proves a hit or occurrence but carries no identity by which
         -- to distinguish a duplicate from a second hit. Keep one representative per binding.
-        for index = #state.unkeyed, 1, -1 do
-            local entry = state.unkeyed[index]
-            if entry.untilAt <= now then
-                table.remove(state.unkeyed, index)
-            elseif entry.family == fam and sameTarget(entry.targetRef, ref) then
-                return fam, "rejected", "duplicate", nil
-            end
-        end
-        if #state.unkeyed >= MAX_SEEN then return fam, "rejected", "queue_full", nil end
-        local gap = fam == "weapon" and WEAPON_GAP or fam == "totem" and TOTEM_GAP or TOTEM_LAG
-        state.unkeyed[#state.unkeyed + 1] = {family = fam, targetRef = ref, untilAt = now + gap}
+        local reason = claimUnkeyed(state, fam, ref, now)
+        if reason then return fam, "rejected", reason, nil end
     end
+    if eventID ~= nil then state.seen[eventID] = now + WEAPON_GAP end
     local hit
     if evidence.hit ~= false then
         hit = {at = now, spellID = spellID}
