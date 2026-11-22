@@ -8,6 +8,7 @@ local REVALIDATE_INTERVAL = .1
 local AMOUNT_SCALE = 1.8   -- amounts are this much larger than the title
 local AMOUNT_BUDGET = 3.2  -- em reserved per protected amount: its real width is never measured
 local PLUS_SCALE = .62
+local PLUS_GAP = 3        -- between the ink of an amount and the "+"
 local families = {
     weapon = {key = "procPlateWeapon", name = "Windfury", sub = "Weapon", icon = "star", spells = {8232, 16361}},
     totem = {key = "procPlateTotem", name = "Windfury", sub = "Totem", icon = "activities", spells = {8512, 8516}},
@@ -41,33 +42,29 @@ local function content(api, result, family, config)
     if config.procPlateGroup and complete and count > 1 then
         sub = (sub ~= "" and sub .. " " or "") .. "×" .. count
     end
-    local items, total, allPublic = {}, 0, complete and count >= 2 and #hits == count
-    if config.procPlateAmounts or config.procPlateSum then
+    local items = {}
+    if config.procPlateAmounts then
         for _, hit in ipairs(hits) do
             local amount = hit.amount
-            if api:Public(amount) and finite(amount) then
-                if allPublic then total = total + amount end
-                if config.procPlateAmounts and #items < MAX_HITS then
+            if #items < MAX_HITS then
+                if api:Public(amount) and finite(amount) then
                     local critical = config.procPlateHighlight and api:Public(hit.critical) and hit.critical == true
                     items[#items + 1] = {text = tostring(amount) .. (critical and "!" or ""), critical = critical}
-                end
-            else
-                allPublic = false
-                if config.procPlateAmounts and #items < MAX_HITS then
-                    if hit.line ~= nil then items[#items + 1] = {line = hit.line}
-                    elseif hit.miss then items[#items + 1] = {miss = true} end
+                elseif hit.line ~= nil then
+                    items[#items + 1] = {line = hit.line}
+                elseif hit.miss then
+                    items[#items + 1] = {miss = true}
                 end
             end
         end
     end
-    local sum = config.procPlateSum and allPublic and finite(total) and string.format(tr("Total %s"), tostring(total)) or ""
     local icon, texture = nil, nil
     if config.procPlateIcon then
         texture = spellTexture(api, result, family)
         if not texture then icon = family.icon end
     end
-    if not icon and not texture and main == "" and sub == "" and sum == "" and #items == 0 then return end
-    return {main = main, sub = sub, items = items, sum = sum, icon = icon, texture = texture}
+    if not icon and not texture and main == "" and sub == "" and #items == 0 then return end
+    return {main = main, sub = sub, items = items, icon = icon, texture = texture}
 end
 
 local function createCard(api, renderer)
@@ -85,7 +82,7 @@ local function createCard(api, renderer)
     spell:Hide()
     local card = {
         frame = frame, bar = bar, spell = spell, icon = K.Icon(frame, "star", 16, "gold"),
-        main = K.Text(frame, "", "heading"), sub = K.Text(frame, "", "heading"), total = K.Text(frame, "", "caption"),
+        main = K.Text(frame, "", "heading"), sub = K.Text(frame, "", "heading"),
         texts = {}, slots = {}, pluses = {},
     }
     for index = 1, MAX_HITS do
@@ -132,9 +129,9 @@ local function layoutItems(card, items, x, y, px, font, config)
             plus:SetFont(font, plusPx, "OUTLINE")
             T.Tint(plus, "SetTextColor", "muted")
             plus:ClearAllPoints()
-            plus:SetPoint("BOTTOMLEFT", trail[1], trail[2], trail[3] + 5, lift)
+            plus:SetPoint("BOTTOMLEFT", trail[1], trail[2], trail[3] + PLUS_GAP, lift)
             plus:Show()
-            region, point, dx, dy = plus, "BOTTOMRIGHT", 5, -lift
+            region, point, dx, dy = plus, "BOTTOMRIGHT", PLUS_GAP, -lift
         else
             region, point, dx, dy = card.frame, "TOPLEFT", x, baseline - (column and shown * (px + 4) or 0)
         end
@@ -165,7 +162,7 @@ local function layoutItems(card, items, x, y, px, font, config)
         if placed then
             shown = shown + 1
             if column then width = math.max(width, itemWidth)
-            else width = width + itemWidth + (plus and 10 + math.ceil(plus:GetStringWidth()) or 0) end
+            else width = width + itemWidth + (plus and 2 * PLUS_GAP + math.ceil(plus:GetStringWidth()) or 0) end
         elseif plus then
             plus:Hide()
         end
@@ -205,10 +202,8 @@ local function fill(api, card, config, model)
     local y = pad + ((mainWidth > 0 or subWidth > 0) and size + 2 or 0)
     local rowWidth, rowHeight = layoutItems(card, model.items, x, y, px, font, config)
     y = y + rowHeight
-    local totalWidth = putText(card, card.total, model.sum, size - 1, x, y + 2, font)
-    if totalWidth > 0 then y = y + size + 4 end
     card.height = math.max(y + pad, visual and iconSize + 2 * pad or 0)
-    card.frame:SetSize(x + math.max(titleWidth, rowWidth, totalWidth) + pad + 4, card.height)
+    card.frame:SetSize(x + math.max(titleWidth, rowWidth) + pad + 4, card.height)
 end
 
 local function sameTarget(a, b)

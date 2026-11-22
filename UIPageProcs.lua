@@ -330,8 +330,6 @@ function Page.Build(view, form, page)
             locale = "Not available in this game language.",
         })[status] or ""
     end})
-    form:Toggle({key = "procPlateSum", label = "Show total damage",
-        desc = "Available when all hits and damage values are known."})
     form:Toggle({key = "procPlateGroup", label = "Show the hit count"})
     form:Toggle({key = "procPlateHighlight", label = "Highlight critical hits"})
     form:Select({key = "procPlateLayout", label = "Hit layout", options = {{"row", "Row"}, {"column", "Column"}}})

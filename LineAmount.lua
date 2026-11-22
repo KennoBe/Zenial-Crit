@@ -498,6 +498,73 @@ end
 function Renderer:Status() return self.status end
 
 -- ---------------------------------------------------------------------------------------------
+-- Calibration: where the figures of a line really stand, measured on a public line of the same
+-- format at the size and scale of the slot's parent. The client's em is not the font size (Noto's
+-- line box is taller than its em), and the padding spaces and the words behind the amount widen
+-- the text box: the slot hangs the amount by these measurements, not by assumed constants.
+-- ---------------------------------------------------------------------------------------------
+local DIGIT_ADVANCE = 0.572   -- em; the fonts' figures are tabular (M1)
+
+function Renderer:ProbeStrings(ratio)
+    local env = self.env
+    if not self.probe then
+        local frame = env.CreateFrame("Frame", nil, env.UIParent)
+        frame:Hide()
+        local amount, blank = frame:CreateFontString(nil, "BACKGROUND"), frame:CreateFontString(nil, "BACKGROUND")
+        amount:SetWordWrap(false)
+        blank:SetWordWrap(false)
+        self.probe = { frame = frame, amount = amount, blank = blank }
+    end
+    if self.probe.ratio ~= ratio then
+        self.probe.frame:SetScale(ratio)
+        self.probe.ratio = ratio
+    end
+    return self.probe
+end
+
+-- {shift, start, tail} in the parent's units, or nil (the slot then keeps the font-size constants).
+-- shift: how far the figures are drawn right of their advance; start: how far the blank text ends
+-- behind the amount's first advance; tail: how far the visible text box ends behind its last one.
+function Renderer:Calibrate(parent, px, push)
+    local env = self.env
+    local okR, ratio = pcall(function() return parent:GetEffectiveScale() / env.UIParent:GetEffectiveScale() end)
+    ratio = okR and self:Number(ratio) or nil
+    if not ratio or ratio <= 0 then ratio = 1 end
+    local key = ("%d:%s:%.3f"):format(px, push and "p" or "a", ratio)
+    self.calibration = self.calibration or {}
+    local known = self.calibration[key]
+    if known ~= nil then return known or nil end
+    local words = self:Words()
+    local result = false
+    local ok = pcall(function()
+        if not words then return end
+        local probe = self:ProbeStrings(ratio)
+        local amount, blank = probe.amount, probe.blank
+        amount:SetFont(push and self.f.push or self.f.amount, px, "OUTLINE")
+        blank:SetFont(self.f.blank, px, "OUTLINE")
+        local one, eleven = Width(self, amount, "0"), Width(self, amount, ("0"):rep(11))
+        local line = MadeLine(words, words.first .. " " .. words.last, "412", nil, true)
+        local head = line:match("^(.-) |cffffffff412|r")
+        local begins = head and Width(self, amount, head .. " x")
+        local ends = Width(self, blank, line)
+        local whole = Width(self, amount, line .. string.rep(" ", LA.Pad(px, push)))
+        pcall(amount.SetText, amount, "")
+        pcall(blank.SetText, blank, "")
+        if not (one and eleven and begins and ends and whole) then return end
+        local digit = (eleven - one) / 10
+        local em = digit / DIGIT_ADVANCE
+        if em < .4 * px or em > 1.6 * px then return end
+        local shift = (push and LA.PUSH_SHIFT or LA.AMOUNT_SHIFT) * em
+        local start, tail = ends - begins, whole - begins - 3 * digit
+        if start < -2 or start > shift or tail < 0 then return end
+        result = { shift = shift, start = start, tail = tail, em = em }
+    end)
+    if not ok then result = false end
+    self.calibration[key] = result
+    return result or nil
+end
+
+-- ---------------------------------------------------------------------------------------------
 -- Slot
 -- ---------------------------------------------------------------------------------------------
 function Renderer:NewSlot(parent)
@@ -550,16 +617,21 @@ function Slot:Layout()
     local a = self.anchor
     if not a or self.broken then return false end
     local reach = self.reach or 0
+    local fit = self.fit
     local ok = pcall(function()
         local frame, text, blank = self.frame, self.text, self.blank
         blank:ClearAllPoints()
         text:ClearAllPoints()
         frame:ClearAllPoints()
-        blank:SetPoint("BOTTOMRIGHT", a[1], a[2], a[3] - reach + 2, a[4])
+        -- Measured: the first figure's ink stands exactly at the anchor.
+        local x = fit and a[3] + fit.start - fit.shift or a[3] - reach + 2
+        blank:SetPoint("BOTTOMRIGHT", a[1], a[2], x, a[4])
         text:SetPoint("BOTTOMLEFT", blank, "BOTTOMLEFT", 0, 0)
         frame:SetPoint("TOPLEFT", blank, "TOPRIGHT", 0, LINE_PAD)
         if self.push then
             frame:SetPoint("BOTTOMRIGHT", blank, "BOTTOMRIGHT", self.span, -LINE_PAD)
+        elseif fit then
+            frame:SetPoint("BOTTOMRIGHT", text, "BOTTOMRIGHT", fit.shift - fit.tail + LINE_PAD, -LINE_PAD)
         else
             frame:SetPoint("BOTTOMRIGHT", text, "BOTTOMRIGHT", reach + LINE_PAD, -LINE_PAD)
         end
@@ -602,6 +674,8 @@ function Slot:Apply(line, px, single)
     if not (samePath((self.text:GetFont()), path) and samePath((self.blank:GetFont()), R.f.blank)) then return false end
     self.push, self.reach = push, reach
     self.span = push and LA.PushField(px) or nil
+    local hasParent, parent = pcall(function() return self.frame:GetParent() end)
+    self.fit = hasParent and parent and R:Calibrate(parent, px, push) or nil
     -- The secret line is joined with padding spaces only inside this pcall.
     local joined, padded = pcall(function() return line .. string.rep(" ", LA.Pad(px, push)) end)
     if not joined then return false end
@@ -624,5 +698,7 @@ function Slot:Width() return self.active and self.push and self.span or nil end
 -- slot that is not showing an amount or is in push mode.
 function Slot:Trail()
     if not self.active or self.push then return nil end
+    -- Measured: the last figure's ink ends here.
+    if self.fit then return self.text, "BOTTOMRIGHT", self.fit.shift - self.fit.tail end
     return self.text, "BOTTOMRIGHT", self.reach - LINE_END
 end
