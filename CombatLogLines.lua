@@ -15,16 +15,19 @@ local EPS = 1e-6
 local MISS_REASONS = { "ABSORB", "BLOCK", "DEFLECT", "DODGE", "EVADE", "IMMUNE", "MISS", "PARRY", "REFLECT", "RESIST" }
 L.MISS_REASONS = MISS_REASONS
 
+-- Damage kinds are bright in every channel (>= 170/255): Blizzard's amount highlight (x1.5) turns
+-- their amount white, while the card's black base colour hides any other figure of the line.
 local RAW = {
-    SWING_DAMAGE = { 122, 78, 141 }, SPELL_DAMAGE = { 52, 58, 64 }, RANGE_DAMAGE = { 133, 54, 169 },
-    SWING_MISSED = { 94, 49, 62 }, SPELL_MISSED = { 151, 147, 57 }, SPELL_EXTRA_ATTACKS = { 101, 63, 148 },
-    DAMAGE_SHIELD = { 55, 71, 97 }, PARTY_KILL = { 55, 141, 52 },
+    SWING_DAMAGE = { 176, 196, 228 }, SPELL_DAMAGE = { 228, 212, 176 }, RANGE_DAMAGE = { 214, 178, 196 },
+    DAMAGE_SHIELD = { 196, 228, 186 }, SWING_MISSED = { 232, 140, 116 }, SPELL_MISSED = { 226, 110, 130 },
+    SPELL_EXTRA_ATTACKS = { 120, 190, 240 }, PARTY_KILL = { 230, 156, 72 },
 }
-local RAW_MISS = {
-    ABSORB = { 114, 147, 76 }, BLOCK = { 70, 118, 86 }, DEFLECT = { 66, 88, 135 }, DODGE = { 92, 167, 149 },
-    EVADE = { 120, 159, 156 }, IMMUNE = { 132, 116, 103 }, MISS = { 154, 113, 58 }, PARRY = { 70, 147, 82 },
-    REFLECT = { 127, 78, 165 }, RESIST = { 147, 50, 59 },
-}
+local RAW_MISS = {}
+for index, reason in ipairs(MISS_REASONS) do
+    local i = index - 1
+    RAW_MISS[reason] = { 206, 92 + (i % 3) * 18, 112 + math.floor(i / 3) * 18 }
+end
+L.DAMAGE_KINDS = { SWING_DAMAGE = true, SPELL_DAMAGE = true, RANGE_DAMAGE = true, DAMAGE_SHIELD = true }
 
 local function Rgb(t) return { r = t[1] / 255, g = t[2] / 255, b = t[3] / 255 } end
 

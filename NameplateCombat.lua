@@ -5,9 +5,12 @@ NS.NameplateCombat = Plate
 local T, K, tr = NS.Theme, NS.Kit, NS.Locale.Text
 local MAX_ACTIVE, MAX_PER_TARGET, MAX_HITS = 40, 4, 3
 local REVALIDATE_INTERVAL = .1
+local AMOUNT_SCALE = 1.8   -- amounts are this much larger than the title
+local AMOUNT_BUDGET = 3.2  -- em reserved per protected amount: its real width is never measured
+local PLUS_SCALE = .62
 local families = {
-    weapon = {key = "procPlateWeapon", name = "Windfury", icon = "star"},
-    totem = {key = "procPlateTotem", name = "Windfury Totem", icon = "activities"},
+    weapon = {key = "procPlateWeapon", name = "Windfury", sub = "Weapon", icon = "star", spells = {8232, 16361}},
+    totem = {key = "procPlateTotem", name = "Windfury", sub = "Totem", icon = "activities", spells = {8512, 8516}},
     extra = {key = "procPlateExtra", name = "Extra Attack", icon = "pvp"},
 }
 
@@ -15,51 +18,81 @@ local function finite(value)
     return type(value) == "number" and value == value and value < math.huge and value > -math.huge
 end
 
+local function spellTexture(api, result, family)
+    if family == families.extra then return api:SpellIcon(result.spellID) end
+    for _, id in ipairs(family.spells or {}) do
+        local icon = api:SpellIcon(id)
+        if icon then return icon end
+    end
+end
+
+-- The card's content. A protected amount stays an opaque line and only reaches a renderer slot.
 local function content(api, result, family, config)
     local hits = type(result.hits) == "table" and result.hits or {}
     local count = result.hitCount
     if not api:Public(count) or not finite(count) or count < 1 or count % 1 ~= 0 then count = 0 end
     local complete = result.complete == true
-    local title = ""
+    local main, sub = "", ""
     if config.procPlateName then
         local spellName = family == families.extra and api:SpellName(result.spellID)
-        title = spellName or tr(family.name)
+        main = string.upper(spellName or tr(family.name))
+        sub = family.sub and string.upper(tr(family.sub)) or ""
     end
     if config.procPlateGroup and complete and count > 1 then
-        title = (title ~= "" and title .. " " or "") .. "×" .. count
+        sub = (sub ~= "" and sub .. " " or "") .. "×" .. count
     end
-    local rows, total, allPublic = {}, 0, complete and count >= 2 and #hits == count
+    local items, total, allPublic = {}, 0, complete and count >= 2 and #hits == count
     if config.procPlateAmounts or config.procPlateSum then
         for _, hit in ipairs(hits) do
             local amount = hit.amount
             if api:Public(amount) and finite(amount) then
                 if allPublic then total = total + amount end
-                if config.procPlateAmounts and #rows < MAX_HITS then
+                if config.procPlateAmounts and #items < MAX_HITS then
                     local critical = config.procPlateHighlight and api:Public(hit.critical) and hit.critical == true
-                    rows[#rows + 1] = {text = tostring(amount) .. (critical and "!" or ""), critical = critical}
+                    items[#items + 1] = {text = tostring(amount) .. (critical and "!" or ""), critical = critical}
                 end
             else
                 allPublic = false
+                if config.procPlateAmounts and #items < MAX_HITS then
+                    if hit.line ~= nil then items[#items + 1] = {line = hit.line}
+                    elseif hit.miss then items[#items + 1] = {miss = true} end
+                end
             end
         end
     end
     local sum = config.procPlateSum and allPublic and finite(total) and string.format(tr("Total %s"), tostring(total)) or ""
-    local icon = config.procPlateIcon and family.icon or nil
-    if not icon and title == "" and sum == "" and #rows == 0 then return end
-    return title, rows, sum, icon
+    local icon, texture = nil, nil
+    if config.procPlateIcon then
+        texture = spellTexture(api, result, family)
+        if not texture then icon = family.icon end
+    end
+    if not icon and not texture and main == "" and sub == "" and sum == "" and #items == 0 then return end
+    return {main = main, sub = sub, items = items, sum = sum, icon = icon, texture = texture}
 end
 
-local function createCard(api)
+local function createCard(api, renderer)
     local root = api:Root()
     if not root then return end
     local frame = K.Card(root, "raised")
     frame:EnableMouse(false)
     frame:Hide()
+    local bar = frame:CreateTexture(nil, "OVERLAY")
+    bar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    bar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    bar:SetWidth(3)
+    local spell = frame:CreateTexture(nil, "ARTWORK")
+    spell:SetTexCoord(.08, .92, .08, .92)
+    spell:Hide()
     local card = {
-        frame = frame, icon = K.Icon(frame, "star", 16, "gold"),
-        title = K.Text(frame, "", "heading"), total = K.Text(frame, "", "caption"), hits = {},
+        frame = frame, bar = bar, spell = spell, icon = K.Icon(frame, "star", 16, "gold"),
+        main = K.Text(frame, "", "heading"), sub = K.Text(frame, "", "heading"), total = K.Text(frame, "", "caption"),
+        texts = {}, slots = {}, pluses = {},
     }
-    for index = 1, MAX_HITS do card.hits[index] = K.Text(frame, "", "body") end
+    for index = 1, MAX_HITS do
+        card.texts[index] = K.Text(frame, "", "body")
+        if renderer then card.slots[index] = renderer:NewSlot(frame) end
+        if index < MAX_HITS then card.pluses[index] = K.Text(frame, "+", "body") end
+    end
     return card
 end
 
@@ -73,40 +106,109 @@ local function putText(card, field, value, size, x, y, font)
     return math.ceil(field:GetStringWidth())
 end
 
-local function fill(api, card, config, title, rows, sum, icon)
-    local pad, gap = 5, 5
-    local font, size, color = api:Font(), config.procPlateSize, config.procPlateColor
-    local width, y = 0, pad
-    card.icon:SetShown(icon ~= nil)
-    if icon then
-        local iconSize = size + 3
-        T.SetIcon(card.icon, icon, "gold")
-        card.icon:SetSize(iconSize, iconSize)
-        card.icon:ClearAllPoints()
-        card.icon:SetPoint("TOPLEFT", card.frame, "TOPLEFT", pad, -pad)
-        width = iconSize
+local function clearItems(card)
+    for index = 1, MAX_HITS do
+        card.texts[index]:SetText("")
+        card.texts[index]:Hide()
+        if card.slots[index] then card.slots[index]:Clear() end
+        if card.pluses[index] then card.pluses[index]:Hide() end
     end
-    local titleX = pad + (icon and width + gap or 0)
-    local titleWidth = putText(card, card.title, title, size, titleX, y + (icon and 1 or 0), font)
-    card.title:SetTextColor(color[1], color[2], color[3])
-    if titleWidth > 0 then width = titleX - pad + titleWidth end
-    if width > 0 then y = y + size + 4 end
+end
 
-    local row, x = config.procPlateLayout == "row", pad
-    for index, label in ipairs(card.hits) do
-        local hit = rows[index]
-        local hitWidth = putText(card, label, hit and hit.text or "", size - 1, x, y, font)
-        if hitWidth > 0 then
-            T.Tint(label, "SetTextColor", hit.critical and "goldBright" or "text")
-            width = math.max(width, x - pad + hitWidth)
-            if row then x = x + hitWidth + gap else y = y + size + 2 end
+-- Amounts side by side ("291 + 317") or stacked. Each element is anchored to the end of the one
+-- before it, so no protected text is measured; the card reserves a fixed budget per amount.
+local function layoutItems(card, items, x, y, px, font, config)
+    clearItems(card)
+    if #items == 0 then return 0, 0 end
+    local column = config.procPlateLayout == "column"
+    local plusPx = math.max(8, math.floor(px * PLUS_SCALE + .5))
+    local lift = math.floor((px - plusPx) * .35 + .5)
+    local baseline = -(y + px + 2)
+    local trail, width, shown = nil, 0, 0
+    for _, item in ipairs(items) do
+        local region, point, dx, dy
+        local plus = not column and trail and card.pluses[shown] or nil
+        if plus then
+            plus:SetFont(font, plusPx, "OUTLINE")
+            T.Tint(plus, "SetTextColor", "muted")
+            plus:ClearAllPoints()
+            plus:SetPoint("BOTTOMLEFT", trail[1], trail[2], trail[3] + 5, lift)
+            plus:Show()
+            region, point, dx, dy = plus, "BOTTOMRIGHT", 5, -lift
+        else
+            region, point, dx, dy = card.frame, "TOPLEFT", x, baseline - (column and shown * (px + 4) or 0)
         end
+        local index = shown + 1
+        local placed, itemWidth = false, 0
+        trail = nil
+        if item.line ~= nil and card.slots[index] then
+            local slot = card.slots[index]
+            slot:Place(region, point, dx, dy)
+            if slot:SetLine(item.line, px, #items == 1) then
+                local tailRegion, tailPoint, tailX = slot:Trail()
+                if tailRegion then trail = {tailRegion, tailPoint, tailX} end
+                itemWidth = slot:Width() or math.ceil(AMOUNT_BUDGET * px)
+                placed = true
+            end
+        elseif item.text or item.miss then
+            local label = card.texts[index]
+            label:SetFont(font, item.miss and plusPx or px, "OUTLINE")
+            label:SetText(item.text or tr("Miss"))
+            T.Tint(label, "SetTextColor", item.critical and "goldBright" or item.miss and "muted" or "text")
+            label:ClearAllPoints()
+            label:SetPoint("BOTTOMLEFT", region, point, dx, dy)
+            label:Show()
+            trail = {label, "BOTTOMRIGHT", 0}
+            itemWidth = math.ceil(label:GetStringWidth())
+            placed = true
+        end
+        if placed then
+            shown = shown + 1
+            if column then width = math.max(width, itemWidth)
+            else width = width + itemWidth + (plus and 10 + math.ceil(plus:GetStringWidth()) or 0) end
+        elseif plus then
+            plus:Hide()
+        end
+        -- Without a trail (a protected amount in push mode, a failed slot) nothing more fits in the row.
+        if not column and not trail then break end
     end
-    if row and #rows > 0 then y = y + size + 2 end
-    local totalWidth = putText(card, card.total, sum, size - 1, pad, y, font)
-    if totalWidth > 0 then y = y + size + 2 end
-    card.height = y + pad
-    card.frame:SetSize(math.max(width, totalWidth) + 2 * pad, card.height)
+    if shown == 0 then return 0, 0 end
+    return width, column and shown * (px + 4) or px + 4
+end
+
+local function fill(api, card, config, model)
+    local pad, gap = 6, 6
+    local font, size, color = api:Font(), config.procPlateSize, config.procPlateColor
+    local px = math.floor(size * AMOUNT_SCALE + .5)
+    local hasItems = #model.items > 0
+    local left = 3 + pad
+    card.bar:SetColorTexture(color[1], color[2], color[3], 1)
+    card.icon:Hide()
+    card.spell:Hide()
+    local iconSize = hasItems and (size + px + 6) or (size + 6)
+    local x = left
+    local visual = model.texture and card.spell or model.icon and card.icon or nil
+    if visual then
+        if model.texture then card.spell:SetTexture(model.texture) else T.SetIcon(card.icon, model.icon, "gold") end
+        visual:SetSize(iconSize, iconSize)
+        visual:ClearAllPoints()
+        visual:SetPoint("TOPLEFT", card.frame, "TOPLEFT", left, -pad)
+        visual:Show()
+        x = left + iconSize + gap
+    end
+    local mainWidth = putText(card, card.main, model.main, size, x, pad, font)
+    card.main:SetTextColor(color[1], color[2], color[3])
+    local subX = x + (mainWidth > 0 and mainWidth + 5 or 0)
+    local subWidth = putText(card, card.sub, model.sub, size, subX, pad, font)
+    T.Tint(card.sub, "SetTextColor", "textSoft")
+    local titleWidth = subX - x + subWidth
+    local y = pad + ((mainWidth > 0 or subWidth > 0) and size + 2 or 0)
+    local rowWidth, rowHeight = layoutItems(card, model.items, x, y, px, font, config)
+    y = y + rowHeight
+    local totalWidth = putText(card, card.total, model.sum, size - 1, x, y + 2, font)
+    if totalWidth > 0 then y = y + size + 4 end
+    card.height = math.max(y + pad, visual and iconSize + 2 * pad or 0)
+    card.frame:SetSize(x + math.max(titleWidth, rowWidth, totalWidth) + pad + 4, card.height)
 end
 
 local function sameTarget(a, b)
@@ -119,7 +221,7 @@ local function detach(card)
     card.attached, card.placedX, card.placedY = nil, nil, nil
 end
 
-function Plate.New(api)
+function Plate.New(api, renderer)
     local view = {}
     local active, pool, offsets = {}, {}, {}
     local lastNow, nextValidation = 0, 0
@@ -127,6 +229,7 @@ function Plate.New(api)
     local function release(index)
         local card = table.remove(active, index)
         detach(card)
+        clearItems(card)
         card.target, card.anchor = nil, nil
         pool[#pool + 1] = card
     end
@@ -196,8 +299,8 @@ function Plate.New(api)
     end
 
     local function start(result, family, target, anchor, config, now)
-        local title, rows, sum, icon = content(api, result, family, config)
-        if not title then return false end
+        local model = content(api, result, family, config)
+        if not model then return false end
         expire(now)
         local count, replace = 0, nil
         for index, card in ipairs(active) do
@@ -211,11 +314,11 @@ function Plate.New(api)
             release(replace)
         end
 
-        local card = table.remove(pool) or createCard(api)
+        local card = table.remove(pool) or createCard(api, renderer)
         if not card then return false end
         card.frame:SetFrameStrata(target and "HIGH" or "TOOLTIP")
         card.frame:SetClampedToScreen(not target)
-        fill(api, card, config, title, rows, sum, icon)
+        fill(api, card, config, model)
         card.target, card.anchor, card.complete = target, anchor, result.complete == true
         card.started, card.duration = now, config.procPlateDuration
         card.anim, card.fade, card.scale = config.procPlateAnim, math.min(config.procPlateFade, card.duration), config.procPlateScale
@@ -243,7 +346,14 @@ function Plate.New(api)
         if not finite(now) or not api:Root() then return false end
         local family = config.procPlateWeapon and families.weapon or config.procPlateTotem and families.totem
             or config.procPlateExtra and families.extra or families.weapon
-        local sample = {complete = true, hitCount = 2, hits = {{amount = 412}, {amount = 638, critical = true}}}
+        local sample = {complete = true, hitCount = 2, hits = {{amount = 291}, {amount = 317}}}
+        -- With a working renderer the preview runs the real path: public sample lines in the amount fonts.
+        local px = math.floor(config.procPlateSize * AMOUNT_SCALE + .5)
+        if renderer and renderer:SelfTest(px) then
+            for index, hit in ipairs(sample.hits) do
+                sample.hits[index] = {line = "Windfury Attack hits Target for |cffffffff" .. hit.amount .. "|r Physical."}
+            end
+        end
         return start(sample, family, nil, api:Root(), config, now)
     end
 

@@ -188,6 +188,18 @@ function Adapter.New(env)
         return self:Text(env.GetSpellInfo, 80, id)
     end
 
+    -- A spell's icon (file ID or path) for a proc card; nil when unknown or unreadable.
+    function A:SpellIcon(id)
+        if not self:Public(id) or type(id) ~= "number" then return nil end
+        local spell, ok, icon = env.C_Spell, false, nil
+        if type(spell) == "table" and type(spell.GetSpellTexture) == "function" then
+            ok, icon = pcall(spell.GetSpellTexture, id)
+        elseif type(env.GetSpellTexture) == "function" then
+            ok, icon = pcall(env.GetSpellTexture, id)
+        end
+        if ok and self:Public(icon) and (type(icon) == "number" or type(icon) == "string") then return icon end
+    end
+
     function A:ProcCooldown(id, fromEvent)
         local spells = env.C_Spell
         if type(spells) ~= "table" or type(spells.GetSpellCooldown) ~= "function" then return nil end

@@ -3,7 +3,7 @@
 ## Notes: Effects for crits, kills, kill streaks and procs
 ## Notes-deDE: Effekte für Krits, Kills, Kill-Serien und Procs
 ## Author: ZENIAL
-## Version: 2.2.3
+## Version: 2.3.0
 ## IconTexture: Interface\AddOns\ZenialCrit\Media\Icon.tga
 ## SavedVariables: ZenialCritDB, ZenialCritHistoryDB, ZenialComixDB, ZenialCritSetupDB, ZenialMinimapDB
 ## X-License: All Rights Reserved
@@ -12,6 +12,7 @@ Sounds.lua
 Logic.lua
 Profiles.lua
 Procs.lua
+CombatLogLines.lua
 History.lua
 Locale.lua
 Theme.lua
@@ -22,6 +23,7 @@ Form.lua
 Window.lua
 Adapter.lua
 Effects.lua
+LineAmount.lua
 NameplateCombat.lua
 UISounds.lua
 UIHistory.lua

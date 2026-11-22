@@ -142,7 +142,10 @@ function P.SanitizeRoot(input)
     end
     if next(profiles) == nil then profiles[DEFAULT_NAME] = NS.Logic.Sanitize({}) end
     local root = {schema = SCHEMA, profiles = profiles, chars = {}, advanced = source.advanced == true,
-        procTest = P.SanitizeProcTest(source.procTest)}
+        procTest = P.SanitizeProcTest(source.procTest),
+        -- Account-wide like the Blizzard combat log filter it prepares; the backup is sanitized by LogLines.
+        logAmounts = source.logAmounts == true or nil,
+        logBackup = type(source.logBackup) == "table" and source.logBackup or nil}
     local rawChars, count = type(source.chars) == "table" and source.chars or {}, 0
     local keys = {}
     for key, value in pairs(rawChars) do

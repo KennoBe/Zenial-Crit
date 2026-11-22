@@ -308,6 +308,28 @@ function Page.Build(view, form, page)
     form:Toggle({key = "procPlateIcon", label = "Show proc icon"})
     form:Toggle({key = "procPlateName", label = "Show proc name"})
     form:Toggle({key = "procPlateAmounts", label = "Show hit damage"})
+    form:Toggle({label = "Damage numbers from the combat log",
+        desc = "Colours the \"My actions\" combat log filter for Crit. Takes effect after /reload.",
+        get = function() return app.root ~= nil and app.root.logAmounts == true end,
+        set = function(value)
+            if not app.root then return end
+            app.root.logAmounts = value == true or nil
+            app:SyncLogLines()
+            page.refresh()
+        end})
+    form:Note({text = function()
+        local status = app:LogLinesStatus()
+        if status == "off" then return "" end
+        return ({
+            ok = "Damage numbers are active.",
+            reload = "Active after the next /reload.",
+            filter = "Select \"My actions\" in the Combat Log tab.",
+            timestamps = "Turn off timestamps in the combat log.",
+            foreign = "HIVE Combat already manages the combat log.",
+            noaddon = "The combat log is not loaded.",
+            locale = "Not available in this game language.",
+        })[status] or ""
+    end})
     form:Toggle({key = "procPlateSum", label = "Show total damage",
         desc = "Available when all hits and damage values are known."})
     form:Toggle({key = "procPlateGroup", label = "Show the hit count"})

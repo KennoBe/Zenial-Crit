@@ -16,7 +16,7 @@ local function procPlateChanged(unit, plate)
     if app.procPlate then app.procPlate:Invalidate(unit, plate) end
 end
 
-local VERSION = "2.2.3"
+local VERSION = "2.3.0"
 app.version = VERSION
 
 -- Config used before login (damage font): the profile of this character, else root.last, else "Standard",
@@ -51,6 +51,7 @@ end
 
 function app:ResetProcState(clearCards)
     self.procState = NS.Procs.NewState()
+    NS.Procs.SetLines(self.procState, self.logLinesReady == true)
     if self.spellLog.test then self.spellLog.test.pending = {} end
     if clearCards and self.procPlate then self.procPlate:Reset() end
 end
@@ -67,6 +68,31 @@ function app:SyncProcPlate()
     self.procSettingsKey = key
     api:TrackNameplates(self:WantsNameplateTracking())
     api:SetProcAnchorListener(self:WantsProcPlate() and procPlateChanged or nil)
+    self:SyncLogLines()
+end
+
+-- Damage numbers from the own combat log lines: opt-in for the account, ready once the prepared
+-- filter is active (after the next reload).
+function app:SyncLogLines()
+    local lines = self.logLines
+    if not lines or not self.root then return end
+    lines:SetEnabled(self.root.logAmounts == true)
+    local ready = self.root.logAmounts == true and self:WantsProcPlate() and self.db.procPlateAmounts == true
+        and lines:Status() == "ok"
+    self.logLinesReady = ready
+    NS.Procs.SetLines(self.procState, ready)
+    if not ready then lines:KeepLines(false) end
+end
+
+function app:LogLinesStatus()
+    if not self.logLines or not self.root or self.root.logAmounts ~= true then return "off" end
+    local status = self.logLines:Status()
+    -- The amount fonts read lines only in the game languages their self-test knows.
+    if status == "ok" and self.lineAmounts then
+        local ok, reason = self.lineAmounts:SelfTest(math.floor(self.db.procPlateSize * 1.8 + .5))
+        if not ok and reason == "locale" then return "locale" end
+    end
+    return status
 end
 
 -- ZenialCritDB is the profile root; app.db is the flat config of the active profile.
@@ -622,6 +648,8 @@ function app:HandleSwing(duration, hand)
     if not test and not (self.observeWeapon or self.observeTotem or self.watchPlateExtra) then return false end
     local now = api:Time()
     if not now then return false end
+    -- The client writes lines only while its filtered events are on; a swing starts the fight.
+    if self.logLinesReady then self.logLines:KeepLines(true) end
     if test and hand == 0 then
         test.swings = test.swings + 1
         self:TimelineAdd(now, "swing")
@@ -667,6 +695,17 @@ function app:HandleExtraText(kind)
     if not now then return end
     NS.Procs.OnExtraAttack(self.procState, now, "extra", self:AttackTarget())
     self:ProcResults(now)
+end
+
+-- An own line typed by its colour; the text is only carried to the card.
+function app:HandleLogLine(text, r, g, b, order)
+    if not self.logLinesReady then return false end
+    local kind = self.logLines:Classify(r, g, b, order)
+    if not kind then return false end
+    local now = api:Time()
+    if not now then return false end
+    NS.Procs.OnLogLine(self.procState, now, kind, text)
+    return true
 end
 
 function app:HandleProcLog(text, order)
@@ -779,7 +818,11 @@ function app:Init()
     self.history = NS.History.Sanitize(ZenialCritHistoryDB)
     ZenialCritHistoryDB = self.history
     self.effects = NS.Effects.New(api)
-    self.procPlate = NS.NameplateCombat.New(api)
+    self.logLines = NS.LogLines.New(_G, self.root.logBackup)
+    self.root.logBackup = self.logLines.store
+    self.lineAmounts = NS.LineAmount.New(_G)
+    self.lineAmounts:Warm()
+    self.procPlate = NS.NameplateCombat.New(api, self.lineAmounts)
     self:SyncProcPlate()
     self:SyncEvents()
     NS.Setup.Initialize(self,fresh)
@@ -824,8 +867,14 @@ frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "PLAYER_SWING" then
         if app.initialized then app:HandleSwing(...) end
     elseif event == "COMBAT_LOG_MESSAGE" and app.initialized then
-        local text, _, _, _, order = ...
+        local text, r, g, b, order = ...
+        app:HandleLogLine(text, r, g, b, order)
         app:HandleProcLog(text, order)
+    elseif event == "PLAYER_REGEN_DISABLED" and app.initialized then
+        if app.logLinesReady then app.logLines:KeepLines(true) end
+    elseif event == "PLAYER_LOGOUT" and app.initialized then
+        -- The filter is written only now: changed from an addon during play, it stops the lines.
+        if app.logLines then app.logLines:Prepare(app.root.logAmounts == true) end
     elseif event == "PLAYER_TARGET_CHANGED" and app.initialized then
         NS.Procs.OnTargetChanged(app.procState)
     elseif event == "COMBAT_TEXT_UPDATE" and app.initialized then
@@ -847,6 +896,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         -- The class can be unreadable at login; it is read again once the world is there.
         if not app.playerClass and api:PlayerClass() then app:SyncEvents() end
     elseif event == "PLAYER_REGEN_ENABLED" and app.initialized then
+        if app.logLines then app.logLines:KeepLines(false) end
         -- The same bounded deadlines also settle the final attacks after leaving combat.
         if app.syncPending then
             app:SyncEvents()
@@ -855,6 +905,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "ADDON_LOADED" then
         local name = ...
         if name == "ZenialCrit" then api:ApplyDamageFont(savedConfig().critFont) end
+        if app.initialized and name == "Blizzard_CombatLog" then app:SyncLogLines() end
         if app.initialized then
             if name == "ZenialUI" and app:WantsProcPlate() then api:SetProcAnchorListener(procPlateChanged) end
             for _, view in ipairs(app.views) do if view.RefreshSounds then view:RefreshSounds() end end
@@ -866,6 +917,8 @@ api:Register(frame, "ADDON_LOADED")
 api:Register(frame, "PLAYER_ENTERING_WORLD")
 api:Register(frame, "ZONE_CHANGED_NEW_AREA")
 api:Register(frame, "PLAYER_REGEN_ENABLED")
+api:Register(frame, "PLAYER_REGEN_DISABLED")
+api:Register(frame, "PLAYER_LOGOUT")
 
 _G.ZenialAddonPanels = _G.ZenialAddonPanels or {}
 _G.ZenialAddonPanels.ZenialCrit = {
