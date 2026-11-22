@@ -1,8 +1,6 @@
 local _, NS = ...
--- Built-in procs (Windfury of the weapon and of the totem). Pure logic, no WoW API, no timer.
--- The client delivers no UNIT_SPELLCAST_SUCCEEDED for the Windfury proc. The candidate is
--- SPELL_UPDATE_COOLDOWN with a readable spell ID, accepted only when it is tied in time to an own
--- main-hand swing or to Stormstrike. Everything is driven by the events the caller passes in.
+-- Pure proc logic. Cooldown correlation can drive the legacy effects; cards also require
+-- independently verified evidence of an own proc on a specific nameplate binding.
 local P = {}
 NS.Procs = P
 
@@ -19,6 +17,8 @@ P.CAST_GUARD = 0.5   -- an own cast of the same totem this short before rules th
 local SWING_LAG, TOTEM_LAG, SWING_LEAD = P.SWING_LAG, P.TOTEM_LAG, P.SWING_LEAD
 local WEAPON_GAP, TOTEM_GAP, CAST_GUARD = P.WEAPON_GAP, P.TOTEM_GAP, P.CAST_GUARD
 local STORMSTRIKE = P.STORMSTRIKE
+local MAX_OPEN, MAX_ANCHORS, MAX_SEEN = 8, 8, 64
+local EPSILON = 1e-9
 
 -- spell ID -> family; the only table the event handler touches for a foreign ID.
 local family = {}
@@ -55,99 +55,338 @@ end
 
 function P.NewState()
     return {
-        anchorAt = nil,                  -- time of the last own main-hand swing or Stormstrike
-        lastProc = {},                   -- family -> time of the last accepted proc
+        anchorAt = nil,
+        lastProc = {},
         castAt = {[8516] = -math.huge, [10608] = -math.huge, [10610] = -math.huge},
-        pending = {},                    -- family -> time of a candidate that waits for its swing
-        slots = {weapon = {}, totem = {}}, -- settled candidates not returned yet (see Drain)
+        cooldowns = {},
+        pending = {},
+        anchors = {},
+        candidates = {},
+        evidence = {},
+        decisions = {},
+        finalized = {},
+        seen = {},
+        unkeyed = {},
+        nextID = 0,
     }
 end
 
 local FAMILIES = {"weapon", "totem"}
 
-local function setSlot(state, fam, result, reason, lag)
-    local slot = state.slots[fam]
-    slot.set, slot.result, slot.reason, slot.lag = true, result, reason, lag
+local function window(fam)
+    return fam == "weapon" and SWING_LAG or TOTEM_LAG
 end
 
--- Settles the waiting candidates against an anchor that arrives at `now` (nil: no anchor, a stale
--- candidate is rejected). Returns the first decision; further ones wait in the slots (Drain).
-local function settle(state, now, anchored)
-    local first
-    for _, fam in ipairs(FAMILIES) do
-        local at = state.pending[fam]
-        if at then
-            state.pending[fam] = nil
-            local result, reason, lag
-            if anchored and now - at <= SWING_LEAD + 1e-9 then
-                state.lastProc[fam] = at
-                result, lag = "proc", at - now
+local function finite(value)
+    return type(value) == "number" and value > -math.huge and value < math.huge
+end
+
+local function targetSnapshot(ref)
+    if type(ref) ~= "table" then return nil end
+    local unit, plate, guid, generation = ref.unit, ref.plate, ref.guid, ref.generation
+    local plateType = type(plate)
+    if type(unit) ~= "string" or unit == "" or (plateType ~= "table" and plateType ~= "userdata")
+        or (guid ~= nil and (type(guid) ~= "string" or guid == ""))
+        or not finite(generation) or generation < 1 or generation % 1 ~= 0 then return nil end
+    return {unit = unit, plate = plate, guid = guid, generation = generation}
+end
+
+local function sameTarget(left, right)
+    return left.unit == right.unit and rawequal(left.plate, right.plate)
+        and left.guid == right.guid and left.generation == right.generation
+end
+
+local function queueDecision(state, fam, result, reason, lag)
+    if #state.decisions < MAX_OPEN * 2 then
+        state.decisions[#state.decisions + 1] = {fam, result, reason, lag}
+    end
+end
+
+local function anchorFits(anchorAt, cooldownAt, lag)
+    return anchorAt >= cooldownAt - lag - EPSILON and anchorAt <= cooldownAt + SWING_LEAD + EPSILON
+end
+
+local function addCandidate(state, fam, cooldown)
+    local lag = window(fam)
+    for _, anchor in ipairs(state.anchors) do
+        if anchor.targetRef and anchorFits(anchor.at, cooldown.at, lag) then
+            if #state.candidates + #state.evidence >= MAX_OPEN then
+                queueDecision(state, fam, "rejected", "queue_full")
             else
-                result, reason = "rejected", "no_swing"
+                state.candidates[#state.candidates + 1] = {
+                    family = fam, at = cooldown.at, deadline = cooldown.at + lag, edge = cooldown.edge,
+                }
             end
-            if first == nil then
-                first = {fam, result, reason, lag}
+            return
+        end
+    end
+end
+
+local function matchCandidate(state, observation)
+    local match, reason
+    for _, candidate in ipairs(state.candidates) do
+        local lag = window(candidate.family)
+        if candidate.family == observation.family and observation.at >= candidate.at - SWING_LEAD - EPSILON
+            and observation.at <= candidate.deadline + EPSILON then
+            local matches, unknown = 0, false
+            for _, anchor in ipairs(state.anchors) do
+                if anchorFits(anchor.at, candidate.at, lag) then
+                    if not anchor.targetRef then
+                        unknown = true
+                    elseif sameTarget(anchor.targetRef, observation.targetRef) then
+                        matches = matches + 1
+                    end
+                end
+            end
+            if matches > 1 or (matches == 1 and (match or unknown
+                or (state.droppedAnchorAt and state.droppedAnchorAt >= candidate.at - lag - EPSILON))) then
+                return nil, "ambiguous_hit"
+            elseif matches == 1 then
+                match = candidate
             else
-                setSlot(state, fam, result, reason, lag)
+                reason = "target_changed"
             end
         end
     end
-    return first
+    return match, reason
 end
 
-local function settleOut(state, now, anchored)
-    local decision = settle(state, now, anchored)
-    if decision then return decision[1], decision[2], decision[3], decision[4] end
+local function publish(state, result)
+    if #state.finalized >= MAX_OPEN then
+        queueDecision(state, result.family, "rejected", "queue_full")
+        return
+    end
+    local fam = result.family
+    state.nextID = state.nextID + 1
+    result.id = state.nextID
+    result.kind = fam == "extra" and "extra" or "windfury_" .. fam
+    result.source = "player"
+    result.status = "confirmed"
+    result.hitCount = #result.hits
+    state.finalized[#state.finalized + 1] = result
+end
+
+local function collectHit(result, observation)
+    if observation.hit then
+        local hits = result.hits
+        local index = #hits + 1
+        while index > 1 and hits[index - 1].at > observation.at do index = index - 1 end
+        table.insert(hits, index, observation.hit)
+    end
+    if observation.direct then result.confidence = "direct" end
+    if observation.complete then result.complete = true end
+end
+
+local function due(at, now, inclusive)
+    return at < now or inclusive and at == now
+end
+
+local function expireRecords(state, now, inclusive)
+    local ready = {}
+    for _, candidate in ipairs(state.candidates) do
+        if due(candidate.deadline, now, inclusive) then ready[candidate] = true end
+    end
+    for _, observation in ipairs(state.evidence) do
+        if due(observation.deadline, now, inclusive) then
+            ready[observation] = true
+        end
+    end
+    if next(ready) == nil then return end
+
+    local matches, groups = {}, {}
+    for _, observation in ipairs(state.evidence) do
+        local candidate, reason
+        if observation.reason ~= "ambiguous_hit" then
+            candidate, reason = matchCandidate(state, observation)
+        end
+        if candidate then
+            matches[observation] = candidate
+            local group = groups[candidate]
+            if not group then
+                group = {targetRef = observation.targetRef}
+                groups[candidate] = group
+            elseif not sameTarget(group.targetRef, observation.targetRef) then
+                group.conflict = true
+            end
+            group.direct = group.direct or observation.direct
+        elseif reason then
+            observation.reason = reason
+        end
+    end
+
+    local retained = {}
+    for _, observation in ipairs(state.evidence) do
+        local candidate = matches[observation]
+        local group = groups[candidate]
+        if group and group.conflict then
+            observation.reason = "ambiguous_hit"
+            candidate, group = nil, nil
+        end
+        if candidate and ready[candidate] then
+            if candidate.edge or group.direct then
+                if not group.hits then
+                    group.family, group.triggerAt = candidate.family, candidate.at
+                    group.hits, group.complete, group.confidence = {}, false, "corroborated"
+                end
+                collectHit(group, observation)
+            else
+                queueDecision(state, observation.family, "rejected", "source_unknown")
+            end
+        elseif not candidate and ready[observation] then
+            if observation.direct then
+                local result = {family = observation.family, triggerAt = observation.at, targetRef = observation.targetRef,
+                    hits = {}, complete = false, confidence = "direct"}
+                collectHit(result, observation)
+                publish(state, result)
+            else
+                queueDecision(state, observation.family, "rejected", observation.reason or "source_unknown")
+            end
+        else
+            retained[#retained + 1] = observation
+        end
+    end
+    state.evidence = retained
+    retained = {}
+    for _, candidate in ipairs(state.candidates) do
+        if ready[candidate] then
+            local group = groups[candidate]
+            if group and group.hits then
+                group.direct = nil
+                publish(state, group)
+            end
+        else
+            retained[#retained + 1] = candidate
+        end
+    end
+    state.candidates = retained
 end
 
 -- A settled candidate that could not be returned directly. Call after every entry point until nil.
 function P.Drain(state)
+    local decision = table.remove(state.decisions, 1)
+    if decision then return decision[1], decision[2], decision[3], decision[4] end
+end
+
+function P.DrainFinal(state)
+    return table.remove(state.finalized, 1)
+end
+
+function P.Deadline(state)
+    local at = math.huge
+    for _, candidate in pairs(state.pending) do at = math.min(at, candidate.at + SWING_LEAD + EPSILON) end
+    for _, candidate in ipairs(state.candidates) do at = math.min(at, candidate.deadline) end
+    for _, observation in ipairs(state.evidence) do at = math.min(at, observation.deadline) end
+    if at ~= math.huge then return at end
+end
+
+function P.Expire(state, now)
     for _, fam in ipairs(FAMILIES) do
-        local slot = state.slots[fam]
-        if slot.set then
-            slot.set = false
-            return fam, slot.result, slot.reason, slot.lag
+        local pending = state.pending[fam]
+        if pending and due(pending.at + SWING_LEAD + EPSILON, now, true) then
+            state.pending[fam] = nil
+            queueDecision(state, fam, "rejected", "no_swing")
         end
     end
+    expireRecords(state, now, true)
+end
+
+-- The first legacy decision is returned directly; any simultaneous decision waits in Drain.
+local function settle(state, now, anchored)
+    local first
+    for _, fam in ipairs(FAMILIES) do
+        local pending = state.pending[fam]
+        if pending and (not anchored or now >= pending.at) then
+            state.pending[fam] = nil
+            local result, reason, lag = "rejected", "no_swing", nil
+            if anchored and now - pending.at <= SWING_LEAD + EPSILON then
+                state.lastProc[fam] = pending.at
+                addCandidate(state, fam, pending)
+                result, reason, lag = "proc", nil, pending.at - now
+            end
+            if first == nil then
+                first = {fam, result, reason, lag}
+            else
+                queueDecision(state, fam, result, reason, lag)
+            end
+        end
+    end
+    if first then return first[1], first[2], first[3], first[4] end
 end
 
 -- Closes every waiting candidate as "no swing" (end of a test).
 function P.Settle(state)
-    local first = settle(state, 0, false)
-    if first then return first[1], first[2], first[3], first[4] end
+    return settle(state, 0, false)
+end
+
+local function addAnchor(state, now, targetRef)
+    expireRecords(state, now, false)
+    state.anchorAt = math.max(state.anchorAt or now, now)
+    if #state.anchors >= MAX_ANCHORS then
+        local dropped = table.remove(state.anchors, 1)
+        state.droppedAnchorAt = math.max(state.droppedAnchorAt or dropped.at, dropped.at)
+    end
+    state.anchors[#state.anchors + 1] = {at = now, targetRef = targetSnapshot(targetRef)}
+    return settle(state, now, true)
 end
 
 -- hand 0 = main hand. Anything else (ranged 2, off hand) is no anchor.
-function P.OnSwing(state, now, hand)
+function P.OnSwing(state, now, hand, targetRef)
     if hand ~= 0 then return nil end
-    state.anchorAt = now
-    return settleOut(state, now, true)
+    return addAnchor(state, now, targetRef)
 end
 
 -- Stormstrike is an anchor like a swing; an own totem cast is remembered per ID.
-function P.OnCast(state, now, spellID)
+function P.OnCast(state, now, spellID, targetRef)
     if spellID == STORMSTRIKE then
-        state.anchorAt = now
-        return settleOut(state, now, true)
+        return addAnchor(state, now, targetRef)
     elseif totemSet[spellID] then
         state.castAt[spellID] = now
+        local pending = state.pending.totem
+        if pending and pending.spellID == spellID and now >= pending.at and now - pending.at <= SWING_LEAD + EPSILON then
+            state.pending.totem = nil
+            return "totem", "rejected", "own_cast", nil
+        end
     end
     return nil
 end
 
-function P.OnCooldown(state, now, spellID, watchWeapon, watchTotem)
+function P.ObserveCooldownBaseline(state, spellID, active)
+    if not family[spellID] or type(active) ~= "boolean" then return end
+    local sample = state.cooldowns[spellID]
+    if not sample then
+        state.cooldowns[spellID] = {active = active, tracked = active}
+    end
+end
+
+local function cooldownRejection(state, now, spellID, active, onGCD)
+    if onGCD == true then return "cooldown_gcd" end
+    local previous = state.cooldowns[spellID]
+    if previous and previous.at and now < previous.at then return "out_of_order" end
+    local tracked = (previous and previous.tracked) or (active == true and onGCD == false)
+    state.cooldowns[spellID] = {at = now, active = active, tracked = tracked}
+    if active == true and previous and previous.active == true then return "cooldown_active" end
+    if active == false and tracked then
+        return previous.active == true and "cooldown_end" or "cooldown_inactive"
+    end
+    return nil, active == true and onGCD == false and previous ~= nil and previous.active == false
+end
+
+function P.OnCooldown(state, now, spellID, watchWeapon, watchTotem, active, onGCD)
     local fam = family[spellID]
     if not fam then return nil end
     local watched = fam == "weapon" and watchWeapon or fam == "totem" and watchTotem
     if not watched then return fam, "rejected", "off", nil end
+    expireRecords(state, now, false)
+    local cooldownReason, edge = cooldownRejection(state, now, spellID, active, onGCD)
+    if cooldownReason then return fam, "rejected", cooldownReason, nil end
     -- A candidate that waited too long is closed first (returned by Drain), then this event counts.
-    local pendingAt = state.pending[fam]
-    if pendingAt then
-        if now - pendingAt <= SWING_LEAD + 1e-9 then
+    local pending = state.pending[fam]
+    if pending then
+        if now - pending.at <= SWING_LEAD + EPSILON then
             return fam, "rejected", "too_soon", nil -- the same proc, a second ID
         end
         state.pending[fam] = nil
-        setSlot(state, fam, "rejected", "no_swing", nil)
+        queueDecision(state, fam, "rejected", "no_swing")
     end
     if fam == "totem" then
         local cast = state.castAt[spellID]
@@ -158,10 +397,68 @@ function P.OnCooldown(state, now, spellID, watchWeapon, watchTotem)
     if last and now >= last and now - last < gap then return fam, "rejected", "too_soon", nil end
     local anchor = state.anchorAt
     local lag = anchor and now - anchor
-    if lag and lag >= 0 and lag <= (fam == "weapon" and SWING_LAG or TOTEM_LAG) then
+    local cooldown = {at = now, spellID = spellID, edge = edge}
+    if lag and lag >= 0 and lag <= window(fam) then
         state.lastProc[fam] = now
+        addCandidate(state, fam, cooldown)
         return fam, "proc", nil, lag
     end
-    state.pending[fam] = now
+    state.pending[fam] = cooldown
+    return fam, "waiting", nil, nil
+end
+
+-- The caller supplies public evidence of its own proc, rather than a generic damage event.
+function P.OnEvidence(state, now, evidence)
+    if type(evidence) ~= "table" then return nil end
+    local fam = evidence.family
+    if fam ~= "weapon" and fam ~= "totem" and fam ~= "extra" then return nil end
+    local spellID = evidence.spellID
+    local named = family[spellID]
+    if (fam == "extra" and named) or (fam ~= "extra" and spellID ~= nil and named ~= fam) then
+        return fam, "rejected", "source_unknown", nil
+    end
+    local ref = targetSnapshot(evidence.targetRef)
+    if not ref then return fam, "rejected", "target_changed", nil end
+
+    expireRecords(state, now, false)
+    local eventID = evidence.eventID
+    if not ((type(eventID) == "string" and eventID ~= "") or finite(eventID)) then eventID = nil end
+    local count = 0
+    if eventID ~= nil then
+        for id, deadline in pairs(state.seen) do
+            if deadline < now then state.seen[id] = nil else count = count + 1 end
+        end
+        if state.seen[eventID] then return fam, "rejected", "duplicate", nil end
+    end
+    if #state.evidence + #state.candidates >= MAX_OPEN or count >= MAX_SEEN then
+        return fam, "rejected", "queue_full", nil
+    end
+    if eventID ~= nil then state.seen[eventID] = now + WEAPON_GAP end
+    if evidence.unkeyed == true then
+        -- A public formatted line proves a hit or occurrence but carries no identity by which
+        -- to distinguish a duplicate from a second hit. Keep one representative per binding.
+        for index = #state.unkeyed, 1, -1 do
+            local entry = state.unkeyed[index]
+            if entry.untilAt <= now then
+                table.remove(state.unkeyed, index)
+            elseif entry.family == fam and sameTarget(entry.targetRef, ref) then
+                return fam, "rejected", "duplicate", nil
+            end
+        end
+        if #state.unkeyed >= MAX_SEEN then return fam, "rejected", "queue_full", nil end
+        local gap = fam == "weapon" and WEAPON_GAP or fam == "totem" and TOTEM_GAP or TOTEM_LAG
+        state.unkeyed[#state.unkeyed + 1] = {family = fam, targetRef = ref, untilAt = now + gap}
+    end
+    local hit
+    if evidence.hit ~= false then
+        hit = {at = now, spellID = spellID}
+        if finite(evidence.amount) then hit.amount, hit.amountKind = evidence.amount, "number"
+        else hit.amountKind = "none" end
+        if type(evidence.critical) == "boolean" then hit.critical = evidence.critical end
+    end
+    state.evidence[#state.evidence + 1] = {
+        family = fam, at = now, deadline = now + SWING_LEAD + window(fam), targetRef = ref,
+        hit = hit, direct = named ~= nil or fam == "extra", complete = evidence.complete == true and evidence.unkeyed ~= true,
+    }
     return fam, "waiting", nil, nil
 end
