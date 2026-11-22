@@ -51,6 +51,13 @@ local MARKER = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8.blp:0|t"
 local LOAD_TEXT = "ZENIAL Crit"
 local RETRY = 5                          -- seconds before a failed self-test is asked again
 
+-- The client draws a line's figures this much (of the font size) left of where the widths of the
+-- two texts put them. Seen in the game on 2026-11-22: 7.1 units at size 23, with and without the
+-- calibration below; the reference corrects the same by a fixed 9 at size 28. Its cause is not
+-- known, so it is a constant of its own and no part of the measurements.
+LA.INK_LEAD = .31
+function LA.Lead(px) return LA.INK_LEAD * px end
+
 function LA.Reach(px) return math.ceil(LA.AMOUNT_SHIFT * px) end
 function LA.PushReach(px) return math.ceil(LA.PUSH_SHIFT * px) end
 function LA.PushField(px) return math.ceil(LA.PUSH_FIELD * px) end
@@ -600,7 +607,7 @@ local function show(self, shown)
 end
 
 function Slot:Clear()
-    self.active, self.push, self.reach, self.span = false, false, nil, nil
+    self.active, self.push, self.reach, self.span, self.lead = false, false, nil, nil, nil
     if self.broken then return end
     pcall(function() self.text:SetText("") end)
     pcall(function() self.blank:SetText("") end)
@@ -623,8 +630,8 @@ function Slot:Layout()
         blank:ClearAllPoints()
         text:ClearAllPoints()
         frame:ClearAllPoints()
-        -- Measured: the first figure's ink stands exactly at the anchor.
-        local x = fit and a[3] + fit.start - fit.shift or a[3] - reach + 2
+        -- Measured: the first figure's ink stands at the anchor, once the client's lead is made up for.
+        local x = (fit and a[3] + fit.start - fit.shift or a[3] - reach + 2) + (self.lead or 0)
         blank:SetPoint("BOTTOMRIGHT", a[1], a[2], x, a[4])
         text:SetPoint("BOTTOMLEFT", blank, "BOTTOMLEFT", 0, 0)
         frame:SetPoint("TOPLEFT", blank, "TOPRIGHT", 0, LINE_PAD)
@@ -672,7 +679,7 @@ function Slot:Apply(line, px, single)
     self.text:SetFont(path, px, "OUTLINE")
     self.blank:SetFont(R.f.blank, px, "OUTLINE")
     if not (samePath((self.text:GetFont()), path) and samePath((self.blank:GetFont()), R.f.blank)) then return false end
-    self.push, self.reach = push, reach
+    self.push, self.reach, self.lead = push, reach, LA.Lead(px)
     self.span = push and LA.PushField(px) or nil
     local hasParent, parent = pcall(function() return self.frame:GetParent() end)
     self.fit = hasParent and parent and R:Calibrate(parent, px, push) or nil
@@ -698,7 +705,8 @@ function Slot:Width() return self.active and self.push and self.span or nil end
 -- slot that is not showing an amount or is in push mode.
 function Slot:Trail()
     if not self.active or self.push then return nil end
-    -- Measured: the last figure's ink ends here.
-    if self.fit then return self.text, "BOTTOMRIGHT", self.fit.shift - self.fit.tail end
-    return self.text, "BOTTOMRIGHT", self.reach - LINE_END
+    -- Measured: the last figure's ink ends here (the lead moved the texts, not the ink's place in them).
+    local lead = self.lead or 0
+    if self.fit then return self.text, "BOTTOMRIGHT", self.fit.shift - self.fit.tail - lead end
+    return self.text, "BOTTOMRIGHT", self.reach - LINE_END - lead
 end

@@ -5,10 +5,18 @@ NS.NameplateCombat = Plate
 local T, K, tr = NS.Theme, NS.Kit, NS.Locale.Text
 local MAX_ACTIVE, MAX_PER_TARGET, MAX_HITS = 40, 4, 3
 local REVALIDATE_INTERVAL = .1
-local AMOUNT_SCALE = 1.8   -- amounts are this much larger than the title
-local AMOUNT_BUDGET = 3.2  -- em reserved per protected amount: its real width is never measured
+local AMOUNT_SCALE = 1.8   -- amounts are this much larger than the size setting
+local CAPTION_SCALE = .85  -- the caption is this much smaller
+local AMOUNT_BUDGET = 3.2  -- em reserved per protected amount where its end is not known
 local PLUS_SCALE = .62
 local PLUS_GAP = 3        -- between the ink of an amount and the "+"
+-- Where the figures' ink stands in an amount's text box, of the amount size (seen in the game on
+-- 2026-11-22 at size 23): its foot this far above the box's bottom, and this high.
+local FIGURE_FOOT, FIGURE_HEIGHT = .22, .72
+-- The plate: a flat box with a hairline in the card's colour, the icon flush in its left end, the
+-- amounts beside it, and the caption free above it (inside it on a card without amounts).
+local EDGE, BOX_PAD, PAD_LEFT, PAD_RIGHT, ROW_GAP, CAPTION_GAP = 1, 5, 6, 7, 3, 2
+local SUB_DIM = .72       -- the caption's second part, in the card's colour made darker
 local families = {
     weapon = {key = "procPlateWeapon", name = "Windfury", sub = "Weapon", icon = "star", spells = {8232, 16361}},
     totem = {key = "procPlateTotem", name = "Windfury", sub = "Totem", icon = "activities", spells = {8512, 8516}},
@@ -70,19 +78,17 @@ end
 local function createCard(api, renderer)
     local root = api:Root()
     if not root then return end
-    local frame = K.Card(root, "raised")
+    local frame = CreateFrame("Frame", nil, root)
     frame:EnableMouse(false)
     frame:Hide()
-    local bar = frame:CreateTexture(nil, "OVERLAY")
-    bar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-    bar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
-    bar:SetWidth(3)
+    local divider = frame:CreateTexture(nil, "BORDER")
     local spell = frame:CreateTexture(nil, "ARTWORK")
     spell:SetTexCoord(.08, .92, .08, .92)
     spell:Hide()
     local card = {
-        frame = frame, bar = bar, spell = spell, icon = K.Icon(frame, "star", 16, "gold"),
-        main = K.Text(frame, "", "heading"), sub = K.Text(frame, "", "heading"),
+        frame = frame, box = K.Plate(frame, "surface"), divider = divider, spell = spell,
+        icon = K.Icon(frame, "star", 16, "gold"),
+        main = K.Text(frame, "", "overline"), sub = K.Text(frame, "", "overline"),
         texts = {}, slots = {}, pluses = {},
     }
     for index = 1, MAX_HITS do
@@ -113,14 +119,15 @@ local function clearItems(card)
 end
 
 -- Amounts side by side ("291 + 317") or stacked. Each element is anchored to the end of the one
--- before it, so no protected text is measured; the card reserves a fixed budget per amount.
-local function layoutItems(card, items, x, y, px, font, config)
+-- before it, so no protected text is measured. bottom: the first row's text foot under the card's
+-- top; pitch: from one row to the next. Returns the reserved width, the amounts shown and, for a
+-- row, where its last amount ends (region, point, x), if that is known.
+local function layoutItems(card, items, x, bottom, pitch, px, font, config)
     clearItems(card)
-    if #items == 0 then return 0, 0 end
     local column = config.procPlateLayout == "column"
     local plusPx = math.max(8, math.floor(px * PLUS_SCALE + .5))
-    local lift = math.floor((px - plusPx) * .35 + .5)
-    local baseline = -(y + px + 2)
+    -- The "+" stands at the middle of the figures.
+    local lift = math.floor((FIGURE_FOOT + FIGURE_HEIGHT / 2) * px - .45 * plusPx + .5)
     local trail, width, shown = nil, 0, 0
     for _, item in ipairs(items) do
         local region, point, dx, dy
@@ -133,18 +140,18 @@ local function layoutItems(card, items, x, y, px, font, config)
             plus:Show()
             region, point, dx, dy = plus, "BOTTOMRIGHT", PLUS_GAP, -lift
         else
-            region, point, dx, dy = card.frame, "TOPLEFT", x, baseline - (column and shown * (px + 4) or 0)
+            region, point, dx, dy = card.frame, "TOPLEFT", x, -(bottom + (column and shown * pitch or 0))
         end
         local index = shown + 1
-        local placed, itemWidth = false, 0
-        trail = nil
+        local placed, itemWidth, itemTrail = false, 0, nil
         if item.line ~= nil and card.slots[index] then
             local slot = card.slots[index]
             slot:Place(region, point, dx, dy)
             if slot:SetLine(item.line, px, #items == 1) then
                 local tailRegion, tailPoint, tailX = slot:Trail()
-                if tailRegion then trail = {tailRegion, tailPoint, tailX} end
-                itemWidth = slot:Width() or math.ceil(AMOUNT_BUDGET * px)
+                if tailRegion then itemTrail = {tailRegion, tailPoint, tailX} end
+                -- Also in push mode: its field is nine figures wide, the box only as wide as an amount.
+                itemWidth = math.ceil(AMOUNT_BUDGET * px)
                 placed = true
             end
         elseif item.text or item.miss then
@@ -155,55 +162,101 @@ local function layoutItems(card, items, x, y, px, font, config)
             label:ClearAllPoints()
             label:SetPoint("BOTTOMLEFT", region, point, dx, dy)
             label:Show()
-            trail = {label, "BOTTOMRIGHT", 0}
+            itemTrail = {label, "BOTTOMRIGHT", 0}
             itemWidth = math.ceil(label:GetStringWidth())
             placed = true
         end
         if placed then
             shown = shown + 1
+            trail = itemTrail
             if column then width = math.max(width, itemWidth)
             else width = width + itemWidth + (plus and 2 * PLUS_GAP + math.ceil(plus:GetStringWidth()) or 0) end
+            -- A protected amount in push mode has no known end: nothing more fits in its row.
+            if not column and not trail then break end
         elseif plus then
+            -- A refused line leaves no gap: the next amount takes its place.
             plus:Hide()
         end
-        -- Without a trail (a protected amount in push mode, a failed slot) nothing more fits in the row.
-        if not column and not trail then break end
     end
-    if shown == 0 then return 0, 0 end
-    return width, column and shown * (px + 4) or px + 4
+    return width, shown, not column and trail or nil
 end
 
 local function fill(api, card, config, model)
-    local pad, gap = 6, 6
     local font, size, color = api:Font(), config.procPlateSize, config.procPlateColor
     local px = math.floor(size * AMOUNT_SCALE + .5)
+    local captionPx = math.max(9, math.floor(size * CAPTION_SCALE + .5))
+    local column = config.procPlateLayout == "column"
     local hasItems = #model.items > 0
-    local left = 3 + pad
-    card.bar:SetColorTexture(color[1], color[2], color[3], 1)
+    local hasCaption = model.main ~= "" or model.sub ~= ""
+    -- Without amounts the caption stands inside the box.
+    local inside = hasCaption and not hasItems
+    local rows = hasItems and (column and math.min(#model.items, MAX_HITS) or 1) or 0
+    local rowHeight = math.ceil(FIGURE_HEIGHT * px)
+    local height = hasItems and 2 * BOX_PAD + rows * rowHeight + (rows - 1) * ROW_GAP or captionPx + 2 * BOX_PAD
+    local top = hasCaption and not inside and captionPx + CAPTION_GAP or 0
+
     card.icon:Hide()
     card.spell:Hide()
-    local iconSize = hasItems and (size + px + 6) or (size + 6)
-    local x = left
+    card.divider:Hide()
+    local x = EDGE
     local visual = model.texture and card.spell or model.icon and card.icon or nil
     if visual then
+        local cell = height - 2 * EDGE
+        local inset = model.texture and 0 or 3
         if model.texture then card.spell:SetTexture(model.texture) else T.SetIcon(card.icon, model.icon, "gold") end
-        visual:SetSize(iconSize, iconSize)
+        visual:SetSize(cell - 2 * inset, cell - 2 * inset)
         visual:ClearAllPoints()
-        visual:SetPoint("TOPLEFT", card.frame, "TOPLEFT", left, -pad)
+        visual:SetPoint("TOPLEFT", card.frame, "TOPLEFT", EDGE + inset, -(top + EDGE + inset))
         visual:Show()
-        x = left + iconSize + gap
+        card.divider:ClearAllPoints()
+        card.divider:SetPoint("TOPLEFT", card.frame, "TOPLEFT", EDGE + cell, -(top + EDGE))
+        card.divider:SetSize(EDGE, cell)
+        card.divider:SetColorTexture(color[1], color[2], color[3], .55)
+        card.divider:Show()
+        x = EDGE + cell + EDGE
     end
-    local mainWidth = putText(card, card.main, model.main, size, x, pad, font)
+    local contentX = x + PAD_LEFT
+
+    local captionX = inside and contentX or EDGE
+    local captionY = inside and top + math.floor((height - captionPx) / 2) or 0
+    local mainWidth = putText(card, card.main, model.main, captionPx, captionX, captionY, font)
     card.main:SetTextColor(color[1], color[2], color[3])
-    local subX = x + (mainWidth > 0 and mainWidth + 5 or 0)
-    local subWidth = putText(card, card.sub, model.sub, size, subX, pad, font)
-    T.Tint(card.sub, "SetTextColor", "textSoft")
-    local titleWidth = subX - x + subWidth
-    local y = pad + ((mainWidth > 0 or subWidth > 0) and size + 2 or 0)
-    local rowWidth, rowHeight = layoutItems(card, model.items, x, y, px, font, config)
-    y = y + rowHeight
-    card.height = math.max(y + pad, visual and iconSize + 2 * pad or 0)
-    card.frame:SetSize(x + math.max(titleWidth, rowWidth) + pad + 4, card.height)
+    local subX = captionX + (mainWidth > 0 and mainWidth + 4 or 0)
+    local subWidth = putText(card, card.sub, model.sub, captionPx, subX, captionY, font)
+    card.sub:SetTextColor(color[1] * SUB_DIM, color[2] * SUB_DIM, color[3] * SUB_DIM)
+    local captionWidth = subX - captionX + subWidth
+
+    local rowWidth, shown, trail = 0, 0, nil
+    local bottom = top + BOX_PAD + rowHeight + FIGURE_FOOT * px
+    if hasItems then
+        rowWidth, shown, trail = layoutItems(card, model.items, contentX, bottom, rowHeight + ROW_GAP, px, font, config)
+        if shown == 0 then
+            -- Every line was refused: the card of a proc without amounts.
+            model.items = {}
+            return fill(api, card, config, model)
+        end
+    else
+        clearItems(card)
+    end
+
+    local boxWidth
+    if hasItems then boxWidth = contentX + rowWidth + PAD_RIGHT + EDGE
+    elseif inside then boxWidth = contentX + captionWidth + PAD_RIGHT + EDGE
+    else boxWidth = x end
+    local box = card.box
+    box.fill:ClearAllPoints()
+    box.fill:SetPoint("TOPLEFT", card.frame, "TOPLEFT", 0, -top)
+    if trail then
+        -- The box ends behind the last figure; the width of a protected amount is never asked for.
+        box.fill:SetPoint("BOTTOMRIGHT", trail[1], trail[2], trail[3] + PAD_RIGHT + EDGE, bottom - top - height)
+    else
+        box.fill:SetSize(boxWidth, height)
+    end
+    for _, edge in pairs(box.edges) do edge:SetColorTexture(color[1], color[2], color[3], 1) end
+    box:SetShown(true)
+
+    card.height = top + height
+    card.frame:SetSize(math.max(inside and 0 or captionWidth + EDGE, boxWidth), card.height)
 end
 
 local function sameTarget(a, b)
@@ -332,9 +385,13 @@ function Plate.New(api, renderer)
         local family, ref = families[result.family], result.targetRef
         if not family or config[family.key] ~= true or not ref then return false end
         local anchor, valid = resolve(ref)
-        if not valid then return false end
+        if not valid then
+            -- The plate the proc hit is gone (its strike killed the target): the card stands at
+            -- the fixed place of a card without a plate.
+            return start(result, family, nil, api:Root(), config, now), "screen"
+        end
         local target = {unit = ref.unit, plate = ref.plate, guid = ref.guid, generation = ref.generation}
-        return start(result, family, target, anchor, config, now)
+        return start(result, family, target, anchor, config, now), "plate"
     end
 
     function view:Preview(config, now)
