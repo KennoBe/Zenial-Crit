@@ -16,7 +16,7 @@ local function procPlateChanged(unit, plate)
     if app.procPlate then app.procPlate:Invalidate(unit, plate) end
 end
 
-local VERSION = "2.3.0"
+local VERSION = "2.3.1"
 app.version = VERSION
 
 -- Config used before login (damage font): the profile of this character, else root.last, else "Standard",
@@ -595,14 +595,21 @@ end
 function app:ProcResults(now, entry, family, result, reason, lag)
     local staleFamily, staleResult, staleReason, staleLag = NS.Procs.Drain(self.procState)
     while staleFamily do
+        api:Diagnostic("proc_decision", staleFamily, staleResult, staleReason, staleLag)
         self:ProcDecision(staleFamily, staleResult, staleReason, staleLag, nil, now)
         staleFamily, staleResult, staleReason, staleLag = NS.Procs.Drain(self.procState)
     end
-    if family then self:ProcDecision(family, result, reason, lag, entry, now) end
+    if family then
+        api:Diagnostic("proc_decision", family, result, reason, lag)
+        self:ProcDecision(family, result, reason, lag, entry, now)
+    end
     local record = NS.Procs.DrainFinal(self.procState)
     while record do
-        api:Diagnostic("proc_final", record.family, record.status, record.confidence, record.hitCount, record.complete)
-        if self:WantsProcPlate() and self:Allowed("proc") then self.procPlate:Present(record, self.db, now) end
+        api:Diagnostic("proc_final", record.family, record.status, record.confidence, record.hitCount, record.complete,
+            record.note, record.lineCount, record.late, self.logLinesReady)
+        local shown, where = false, nil
+        if self:WantsProcPlate() and self:Allowed("proc") then shown, where = self.procPlate:Present(record, self.db, now) end
+        api:Diagnostic("proc_card", record.family, shown, where)
         record = NS.Procs.DrainFinal(self.procState)
     end
     if self.procPlate:Busy() or NS.Procs.Deadline(self.procState) then frame:SetScript("OnUpdate", onUpdate) end
@@ -871,6 +878,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         app:HandleLogLine(text, r, g, b, order)
         app:HandleProcLog(text, order)
     elseif event == "PLAYER_REGEN_DISABLED" and app.initialized then
+        if not app.logLinesReady and app.root and app.root.logAmounts == true then app:SyncLogLines() end
         if app.logLinesReady then app.logLines:KeepLines(true) end
     elseif event == "PLAYER_LOGOUT" and app.initialized then
         -- The filter is written only now: changed from an addon during play, it stops the lines.

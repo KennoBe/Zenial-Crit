@@ -77,7 +77,6 @@ function P.NewState()
         targetRevision = 0,
         nextID = 0,
         lines = {},
-        castFrames = {},
         wantLines = false,
     }
 end
@@ -85,7 +84,7 @@ end
 -- Whether cards wait for own combat-log lines (the option is on and the log is ready).
 function P.SetLines(state, enabled)
     state.wantLines = enabled == true
-    if not state.wantLines then state.lines = {} end
+    if not state.wantLines then state.lines, state.castMark = {}, nil end
 end
 
 local FAMILIES = {"weapon", "totem"}
@@ -162,18 +161,11 @@ local function addCandidate(state, fam, cooldown)
 end
 
 -- The own lines of one kind in a time span that no card has taken; misses count as a strike
--- without an amount. Lines right after an own cast belong to that cast.
-local function castFrame(state, at)
-    for _, castAt in ipairs(state.castFrames) do
-        if math.abs(castAt - at) <= EPSILON then return true end
-    end
-    return false
-end
-
+-- without an amount. A line that an own cast marked belongs to that cast.
 local function freeLines(state, from, to, damage, miss, missTo)
     local list = {}
     for _, entry in ipairs(state.lines) do
-        if not entry.used and not castFrame(state, entry.at) and entry.at >= from - EPSILON then
+        if not entry.used and not entry.cast and entry.at >= from - EPSILON then
             if entry.kind == damage and entry.at <= to + EPSILON then
                 list[#list + 1] = entry
             elseif miss and entry.kind == miss and entry.at <= (missTo or to) + EPSILON then
@@ -218,12 +210,30 @@ local function lineHit(entry, family)
     return hit
 end
 
--- Amounts for a settled card from the own lines of its swing. Ambiguity leaves the title only.
-local function attachLines(state, result, root, extra)
-    if not state.wantLines or type(root) ~= "table" or not root.swing then return end
-    local fam, picked, at = result.family, nil, root.at
+-- The lines a card of this family would choose from (one selection for the wait check and attachLines).
+-- A re-armed (late) card accepts damage lines up to the miss tail.
+local function selectLines(state, fam, root, extra, late)
+    local at = root.at
+    local to = at + (late and LINE_MISS_TAIL or LINE_TAIL)
     if fam == "weapon" then
-        local list = freeLines(state, at, at + LINE_TAIL, "SPELL_DAMAGE", "SPELL_MISSED", at + LINE_MISS_TAIL)
+        return freeLines(state, at, to, "SPELL_DAMAGE", "SPELL_MISSED", at + LINE_MISS_TAIL)
+    end
+    extra = extra or extraSwing(state, root)
+    if extra then return swingLines(state, extra) end
+    -- A shaman's own totem: its extra attack is a spell line; the weapon took its strikes first.
+    if fam == "totem" then return freeLines(state, at, to, "SPELL_DAMAGE", "SPELL_MISSED", at + LINE_MISS_TAIL) end
+    return {}
+end
+
+-- Amounts for a settled card from the own lines of its swing. Ambiguity leaves the title only.
+local function attachLines(state, result, root, extra, late)
+    result.late = late == true or nil
+    if not state.wantLines then result.note = "lines_off"; return end
+    if type(root) ~= "table" or not root.swing then result.note = "no_swing_root"; return end
+    local fam, picked = result.family, nil
+    local list = selectLines(state, fam, root, extra, late)
+    result.lineCount = #list
+    if fam == "weapon" then
         -- A totem proc on the same swing writes one more spell line (a shaman's own totem).
         local most = STRIKES_MAX
         for _, candidate in ipairs(state.candidates) do
@@ -233,18 +243,11 @@ local function attachLines(state, result, root, extra)
             picked = {}
             for index = 1, math.min(#list, STRIKES_MAX) do picked[#picked + 1] = list[index] end
         end
-    else
-        extra = extra or extraSwing(state, root)
-        if extra then
-            local list = swingLines(state, extra)
-            if #list == 1 then picked = list end
-        elseif fam == "totem" then
-            -- A shaman's own totem: its extra attack is a spell line; the weapon took its strikes first.
-            local list = freeLines(state, at, at + LINE_TAIL, "SPELL_DAMAGE", "SPELL_MISSED", at + LINE_MISS_TAIL)
-            if #list == 1 then picked = list end
-        end
+    elseif #list == 1 then
+        picked = list
     end
-    if not picked then return end
+    if not picked then result.note = #list == 0 and "none" or "many"; return end
+    result.note = "ok"
     local hits = {}
     for _, entry in ipairs(picked) do hits[#hits + 1] = lineHit(entry, fam) end
     result.hits = hits
@@ -314,26 +317,29 @@ end
 -- A recognized own proc may display its name on an unchanged attack target.
 -- Only independently attributed hits can supply numbers or a hit count.
 local function fallbackTarget(state, candidate)
-    local target = candidate.targetRef
-    if not target or candidate.revision ~= state.targetRevision then return nil end
     local lag = window(candidate.family)
-    if state.droppedAnchorAt and state.droppedAnchorAt >= candidate.at - lag - EPSILON then return nil end
+    if state.droppedAnchorAt and state.droppedAnchorAt >= candidate.at - lag - EPSILON then return nil, "card_dropped_anchor" end
     local cast = state.castAt[candidate.spellID]
-    if cast and cast >= candidate.at - CAST_GUARD and cast <= candidate.deadline then return nil end
-    local found = false
+    if cast and cast >= candidate.at - CAST_GUARD and cast <= candidate.deadline then return nil, "card_own_cast" end
+    -- The target is the swing's own: every fitting anchor must know it, and all must agree.
+    local target
     for _, anchor in ipairs(state.anchors) do
         if anchorFits(anchor.at, candidate.at, lag) then
-            if anchor.revision ~= candidate.revision or not anchor.targetRef or not sameTarget(anchor.targetRef, target) then
-                return nil
+            if not anchor.targetRef then return nil, "card_no_target" end
+            if target and not sameTarget(target, anchor.targetRef) then return nil, "card_targets_differ" end
+            -- Same target view as the swing, yet another target: the event does not belong to it.
+            if candidate.targetRef and candidate.revision == anchor.revision
+                and not sameTarget(candidate.targetRef, anchor.targetRef) then
+                return nil, "card_targets_differ"
             end
-            found = true
+            target = anchor.targetRef
         end
     end
-    if not found then return nil end
+    if not target then return nil, "card_no_target" end
     for _, observation in ipairs(state.evidence) do
         if observation.family == candidate.family and observation.direct
             and observation.at >= candidate.at - SWING_LEAD - EPSILON and observation.at <= candidate.deadline + EPSILON then
-            return nil -- Let explicit source and victim evidence decide where to show a card.
+            return nil, "card_direct_evidence" -- Let explicit source and victim evidence decide where to show a card.
         end
     end
     return target
@@ -373,10 +379,22 @@ local function settleExtra(state, now)
     end
 end
 
+-- A due card with no line yet waits once more, up to the miss tail.
+local function rearm(state, candidate)
+    local anchor = candidate.anchor
+    if not state.wantLines or candidate.due == nil or candidate.late or type(anchor) ~= "table" or not anchor.swing
+        or anchor.at + LINE_MISS_TAIL <= candidate.due
+        or #selectLines(state, candidate.family, anchor, nil, false) > 0 then return false end
+    candidate.late, candidate.due = true, anchor.at + LINE_MISS_TAIL
+    return true
+end
+
 local function expireRecords(state, now, inclusive)
     local ready = {}
     for _, candidate in ipairs(state.candidates) do
-        if due(candidate.due or candidate.deadline, now, inclusive) then ready[candidate] = true end
+        if due(candidate.due or candidate.deadline, now, inclusive) then
+            if not rearm(state, candidate) or due(candidate.due, now, inclusive) then ready[candidate] = true end
+        end
     end
     for _, observation in ipairs(state.evidence) do
         if due(observation.deadline, now, inclusive) then
@@ -452,15 +470,22 @@ local function expireRecords(state, now, inclusive)
         local group = groups[candidate]
         if group and group.hits then
             group.direct = nil
-            if #group.hits == 0 then attachLines(state, group, candidate.anchor) end
+            if #group.hits == 0 then attachLines(state, group, candidate.anchor, nil, candidate.late) end
             publish(state, group)
         else
-            local target = fallbackTarget(state, candidate)
-            if target and not claimUnkeyed(state, candidate.family, target, candidate.at) then
-                local result = {family = candidate.family, triggerAt = candidate.at,
-                    targetRef = target, hits = {}, complete = false, confidence = "attack_target"}
-                attachLines(state, result, candidate.anchor)
-                publish(state, result)
+            local target, why = fallbackTarget(state, candidate)
+            if target then
+                local claimed = claimUnkeyed(state, candidate.family, target, candidate.at)
+                if claimed then
+                    queueDecision(state, candidate.family, "rejected", "card_" .. claimed)
+                else
+                    local result = {family = candidate.family, triggerAt = candidate.at,
+                        targetRef = target, hits = {}, complete = false, confidence = "attack_target"}
+                    attachLines(state, result, candidate.anchor, nil, candidate.late)
+                    publish(state, result)
+                end
+            elseif why ~= "card_direct_evidence" then
+                queueDecision(state, candidate.family, "rejected", why)
             end
         end
     end
@@ -577,16 +602,26 @@ function P.OnLogLine(state, now, kind, line)
     while lines[1] and (lines[1].at < now - LINE_KEEP or #lines >= MAX_LINES) do table.remove(lines, 1) end
     local swing = state.lastSwing
     state.lastSwing = nil
-    lines[#lines + 1] = {at = now, kind = kind, line = line, after = swing and swing.at == now and swing or nil}
+    -- The next line in the frame of an own cast is that cast's line (all of them for Stormstrike).
+    local mark, cast = state.castMark, nil
+    if mark then
+        if mark.at == now then
+            cast = true
+            if not mark.whole then state.castMark = nil end
+        else
+            state.castMark = nil
+        end
+    end
+    lines[#lines + 1] = {at = now, kind = kind, line = line, cast = cast,
+        after = swing and swing.at == now and swing or nil}
 end
 
 -- Stormstrike is an anchor like a swing; an own totem cast is remembered per ID.
--- Lines in the frame of any own cast belong to that cast and never become a proc's amount.
+-- An own cast marks its own line, which never becomes a proc's amount. The Windfury Weapon proc's
+-- own IDs mark nothing.
 function P.OnCast(state, now, spellID, targetRef)
-    if state.wantLines and finite(now) then
-        local frames = state.castFrames
-        while frames[1] and (frames[1] < now - LINE_KEEP or #frames >= MAX_ANCHORS) do table.remove(frames, 1) end
-        frames[#frames + 1] = now
+    if state.wantLines and finite(now) and family[spellID] ~= "weapon" then
+        state.castMark = {at = now, whole = spellID == STORMSTRIKE}
     end
     if spellID == STORMSTRIKE then
         return addAnchor(state, now, targetRef)
