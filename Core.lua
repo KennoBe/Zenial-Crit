@@ -16,8 +16,21 @@ local function procPlateChanged(unit, plate)
     if app.procPlate then app.procPlate:Invalidate(unit, plate) end
 end
 
-local VERSION = "2.3.1"
+local VERSION = "2.4.0-beta.1"
 app.version = VERSION
+
+-- Reports an occurrence to ZENIAL Community when it is loaded; stays silent without it, with another API
+-- version, or when Emit fails. Community is looked up at the moment of sending (no load-order dependency).
+local function report(eventType, payload)
+    local community = _G.ZenialCommunity
+    local events = type(community) == "table" and community.Events
+    if type(events) ~= "table" or events.API_VERSION ~= 1 or type(events.Emit) ~= "function" then return false end
+    local ok, accepted = pcall(events.Emit, "crit", eventType, payload)
+    return ok and accepted == true
+end
+
+-- Streak tier 1..5 by the catalog's step names; a longer custom list keeps the highest name.
+local STREAK_STEPS = {"double", "triple", "ultra", "mega", "monster"}
 
 -- Config used before login (damage font): the profile of this character, else root.last, else "Standard",
 -- else a flat legacy table. The identity can be missing this early; nothing is stored here.
@@ -521,10 +534,12 @@ function app:HandleKill(attackerGUID, victimGUID)
     local db = self.db
     if not self:Allowed("kill") then return false end
     self:EmitChat("kill")
+    report("crit.kill", {victimGuid = victimGUID})
     local killSound, killOpts = db.killSound and "kill" or nil, nil
     if (db.streakGraphics or db.streakSound) and (db.streakTargets ~= "players" or api:IsPlayerGUID(victimGUID)) then
-        local _, tier = NS.Logic.StreakStep(self.state, now, db.streakWindow, db.streakSteps)
+        local count, tier = NS.Logic.StreakStep(self.state, now, db.streakWindow, db.streakSteps)
         if tier >= 1 then
+            report("crit.streak", {step = STREAK_STEPS[math.min(tier, #STREAK_STEPS)], count = math.min(count, 99)})
             local streakSound = NS.Logic.SoundCategory(db, nil, "streak")
             local shown, _, graphic, played = self:Trigger("streak", false, streakSound, nil,
                 {text = NS.Logic.StreakText(db, tier), tier = tier})
@@ -693,6 +708,7 @@ function app:HandleSpellcast(unit, _, spellID)
     if last and now >= last and now - last < .3 then return false end
     self.procSeen[spellID] = now
     if not self:Allowed("proc") then return false end
+    report("crit.proc", {proc = "spell_" .. spellID})
     return self:Trigger("proc", false, NS.Logic.SoundCategory(self.db, nil, "proc"), nil, {text = trigger.text})
 end
 
@@ -743,6 +759,7 @@ end
 function app:FireWindfury(family, preview)
     local db = self.db
     if not preview and not self:Allowed("proc") then return false end
+    if not preview then report("crit.proc", {proc = family == "totem" and "windfury_totem" or "windfury"}) end
     local text = family == "totem" and db.procWindfuryTotemText or db.procWindfuryWeaponText
     local category = (preview or db.procSound) and "windfury" or nil
     return self:Trigger("proc", preview == true, category, nil, {text = text, flash = db.procWindfuryFlash == true})
@@ -767,6 +784,7 @@ function app:HandleObserved(kind, unit, amount, school)
     end
     if snapshot and recording then self:RecordObserved(amount, school, snapshot, kind) end
     if not self:Allowed(kind, classification) then return false end
+    report("crit.crit", {heal = kind == "heal"})
     self:EmitChat(chatCategory, amount, school, snapshot and snapshot.target)
     local category, opts = NS.Logic.SoundCategory(self.db, classification, kind), nil
     if not NS.Logic.PassesThreshold(self.db, kind, amount, previous) then
@@ -784,6 +802,7 @@ function app:HandleCombat(unit, action, modifier, amount, school)
             -- Generic output needs only the public crit flag. Never compare,
             -- record or format protected numeric payloads, including chat text.
             if not self:Allowed("crit", "unknown") then return false end
+            report("crit.crit", {heal = false})
             return self:Trigger("crit", false, NS.Logic.SoundCategory(self.db, "unknown", "crit"))
         end
         return self:HandleObserved("crit", unit, amount, school)
