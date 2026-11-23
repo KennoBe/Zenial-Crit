@@ -67,13 +67,19 @@ function Adapter.New(env)
 
     function A:Root() return env.UIParent end
     function A:Font() return env.STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF" end
-    function A:FontStyle(style)
+    -- False on clients whose script the bundled and the Cyrillic game fonts do not cover.
+    local function latinLocale()
         local locale = "enUS"
         if type(env.GetLocale) == "function" then
             local ok, value = pcall(env.GetLocale)
             if ok and type(value) == "string" then locale = value end
         end
-        local latin = locale ~= "koKR" and locale ~= "zhCN" and locale ~= "zhTW"
+        return locale ~= "koKR" and locale ~= "zhCN" and locale ~= "zhTW"
+    end
+
+    -- Returns path, size, flags and the style that was used ("standard" for unknown values).
+    function A:FontStyle(style)
+        local latin = latinLocale()
         local specs = {
             standard = {self:Font(), 55, "OUTLINE"},
             comic = {latin and "Fonts\\SKURRI_CYR.TTF" or self:Font(), 62, "THICKOUTLINE"},
@@ -82,10 +88,11 @@ function Adapter.New(env)
         }
         if type(style) == "string" and style:sub(1, 7) == "shared:" then
             local path = self:SharedFontPath(style:sub(8))
-            if path then return path, 58, "THICKOUTLINE" end
+            if path then return path, 58, "THICKOUTLINE", "shared" end
         end
-        local spec = specs[style] or specs.standard
-        return spec[1], spec[2], spec[3]
+        local used = specs[style] and style or "standard"
+        local spec = specs[used]
+        return spec[1], spec[2], spec[3], used
     end
 
     local function sharedMedia()
@@ -116,8 +123,15 @@ function Adapter.New(env)
         return result
     end
 
+    -- The game's damage numbers: "standard" shows them in Russo One (Latin and Cyrillic only).
+    function A:DamageFontPath(style)
+        local path, _, _, used = self:FontStyle(style)
+        if used == "standard" and latinLocale() then return "Interface\\AddOns\\ZenialCrit\\Media\\RussoOne-Regular.ttf" end
+        return path
+    end
+
     function A:ApplyDamageFont(style)
-        local path = self:FontStyle(style)
+        local path = self:DamageFontPath(style)
         if self.damageFontPath == path then return false end
         self.damageFontPath = path
         env.DAMAGE_TEXT_FONT = path
