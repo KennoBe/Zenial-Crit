@@ -16,7 +16,7 @@ local function procPlateChanged(unit, plate)
     if app.procPlate then app.procPlate:Invalidate(unit, plate) end
 end
 
-local VERSION = "2.4.0-beta.1"
+local VERSION = "2.4.0"
 app.version = VERSION
 
 -- Reports an occurrence to ZENIAL Community when it is loaded; stays silent without it, with another API
